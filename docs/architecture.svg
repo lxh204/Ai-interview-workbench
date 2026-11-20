@@ -1,161 +1,177 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="990" viewBox="0 0 1600 990" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="896" viewBox="0 0 1600 896" role="img" aria-labelledby="title desc">
   <title id="title">AI Interview Workbench 系统架构</title>
-  <desc id="desc">Vue 3 工作台通过 REST、SSE 和 WebSocket 访问 Spring Boot 单应用。PostgreSQL 与 pgvector 保存业务数据和向量，Redis Stream 投递简历分析任务。模型服务包括可配置的聊天模型、向量模型和可选百炼 Fun-ASR。</desc>
+  <desc id="desc">Vue 3 前端与 Spring Boot 后端之间使用 REST、SSE 和 WebSocket。PostgreSQL 与 pgvector 保存业务记录、上传原件与向量，Redis Stream 投递简历分析任务。模型服务提供聊天、向量和可选的百炼语音转写。</desc>
   <defs>
-    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0 0 10 5 0 10Z" fill="#46627d"/>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M0 0 9 4 0 8Z" fill="#1d252c"/>
     </marker>
   </defs>
   <style>
-    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #16304a; }
-    .canvas { fill: #f7f9fc; }
-    .title { font-size: 35px; font-weight: 750; letter-spacing: -.5px; }
-    .heading { font-size: 26px; font-weight: 700; }
-    .section-title { font-size: 20px; font-weight: 700; fill: #31604b; }
-    .meta { font-size: 23px; font-weight: 550; fill: #385572; }
-    .tile-title { font-size: 22px; font-weight: 690; }
-    .tile-sub { font-size: 17px; fill: #49637c; }
-    .body { font-size: 19px; fill: #304d67; }
-    .protocol { font-size: 18px; font-weight: 600; fill: #3f5b76; }
-    .small { font-size: 16px; }
-    .panel { fill: #fff; stroke-width: 2; }
-    .tile { stroke-width: 1.3; }
-    .frontend-panel { stroke: #8aaad2; }
-    .front-band { fill: #deebfa; }
-    .backend-panel { stroke: #85b297; }
-    .back-band { fill: #dcefe4; }
-    .cloud-panel { stroke: #a88abf; }
-    .cloud-band { fill: #ede2f5; }
-    .warm { fill: #fff3df; stroke: #e0b56a; }
-    .rose { fill: #ffefed; stroke: #e3a4a1; }
-    .blue { fill: #eff5fc; stroke: #9cb5d5; }
-    .purple { fill: #f4ecfa; stroke: #c7a8d9; }
-    .green { fill: #ecf7f0; stroke: #9fc6ae; }
-    .ingress { fill: #f4f8fd; stroke: #bccde1; }
-    .service { fill: #f5faf6; stroke: #a5c6b0; }
-    .ability { fill: #fff7e7; stroke: #dec080; }
-    .queue { fill: #f0f7f4; stroke: #a4c6b4; }
-    .model { fill: #f7f0fb; stroke: #ccb2dc; }
-    .cloud { fill: #faf6fc; stroke: #c9b3d9; }
-    .database-tile { fill: #f1f6fd; stroke: #90aed3; }
-    .database-icon { fill: #d9e8fa; stroke: #7397c6; stroke-width: 2; }
-    .redis-tile { fill: #eef8f2; stroke: #93bda7; }
-    .redis-icon { fill: #d6eddf; stroke: #739e87; stroke-width: 2; }
-    .wire { fill: none; stroke: #46627d; stroke-width: 2.4; }
-    .dashed { stroke-dasharray: 6 5; }
+    text { font-family: Arial, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #1b232b; }
+    .canvas { fill: #fff; }
+    .layer-title { font-size: 21px; font-weight: 700; }
+    .row-title { font-size: 18px; font-weight: 550; }
+    .group-label { fill: #505d67; font-size: 14px; }
+    .group-title { font-size: 17px; font-weight: 700; }
+    .part { font-size: 16px; }
+    .small { font-size: 15px; }
+    .protocol { fill: #414a54; font-size: 16px; }
+    .protocol.small { font-size: 14px; }
+    .outline { fill: #fff; stroke-width: 1.45; }
+    .tile { stroke-width: 1.35; }
+    .rule { fill: none; stroke-width: 1.2; }
+    .front { stroke: #7998c6; }
+    .front-header { fill: #dce8fa; }
+    .resume { fill: #fff0d9; stroke: #d9a449; }
+    .interview { fill: #f8d7d5; stroke: #ca7e79; }
+    .knowledge { fill: #e8ddf0; stroke: #a786b9; }
+    .back, .service { stroke: #88ae81; }
+    .back-header { fill: #dcebdc; }
+    .service { fill: #fcfefb; }
+    .capabilities, .gateway { stroke: #cfaf59; }
+    .capabilities-header, .gateway { fill: #fff1cd; }
+    .tile.capabilities { fill: #fffdf5; }
+    .worker { stroke: #727d80; }
+    .worker-header { fill: #f2f2e9; }
+    .tile.worker { fill: #fff; }
+    .external { stroke: #a98ab9; }
+    .external-header { fill: #e7deed; }
+    .tile.external { fill: #fdfbfe; }
+    .wire { fill: none; stroke: #1d252c; stroke-width: 2.3; }
+    .dashed { stroke-dasharray: 7 6; }
+    .cylinder { stroke-width: 1.6; }
+    .postgres { fill: #f6d9d8; stroke: #c2807b; }
+    .postgres-top { fill: #f3cecc; stroke: #c2807b; }
+    .redis { fill: #daecda; stroke: #81a982; }
+    .redis-top { fill: #d0e6d0; stroke: #81a982; }
+    .storage-title { font-size: 18px; }
+    .storage-sub { font-size: 16px; fill: #414a54; }
   </style>
-  <rect x="0" y="0" width="1600" height="990" rx="0" class="canvas"/>
-  <text x="52" y="63" class="title" text-anchor="start">AI Interview Workbench</text>
-  <text x="510" y="63" class="heading" text-anchor="start">系统架构</text>
+  <rect x="0" y="0" width="1600" height="896" rx="0" class="canvas"/>
   <g id="frontend">
-    <rect x="52" y="104" width="1050" height="150" rx="18" class="panel frontend-panel"/>
-    <rect x="53" y="105" width="1048" height="52" rx="17" class="front-band"/>
-    <text x="76" y="139" class="heading" text-anchor="start">前端工作台</text>
-    <text x="1079" y="139" class="meta" text-anchor="end">Vue 3 · TypeScript · Vite</text>
-    <rect x="74" y="169" width="191.6" height="65" rx="12" class="tile warm"/>
-    <text x="169.8" y="197" class="tile-title" text-anchor="middle">简历管理</text>
-    <text x="169.8" y="220" class="tile-sub" text-anchor="middle">上传分析 · 简历库</text>
-    <rect x="277.6" y="169" width="191.6" height="65" rx="12" class="tile rose"/>
-    <text x="373.40000000000003" y="197" class="tile-title" text-anchor="middle">模拟面试</text>
-    <text x="373.40000000000003" y="220" class="tile-sub" text-anchor="middle">文字 · 语音 · 记录</text>
-    <rect x="481.2" y="169" width="191.6" height="65" rx="12" class="tile blue"/>
-    <text x="577" y="197" class="tile-title" text-anchor="middle">面试日程</text>
-    <text x="577" y="220" class="tile-sub" text-anchor="middle">邀请解析 · 日历</text>
-    <rect x="684.8" y="169" width="191.6" height="65" rx="12" class="tile purple"/>
-    <text x="780.5999999999999" y="197" class="tile-title" text-anchor="middle">知识库</text>
-    <text x="780.5999999999999" y="220" class="tile-sub" text-anchor="middle">资料 · 问答 · 题库</text>
-    <rect x="888.4" y="169" width="191.6" height="65" rx="12" class="tile green"/>
-    <text x="984.1999999999999" y="197" class="tile-title" text-anchor="middle">模型设置</text>
-    <text x="984.1999999999999" y="220" class="tile-sub" text-anchor="middle">服务配置 · 切换</text>
+    <rect x="18" y="11" width="1082" height="147" rx="15" class="outline front"/>
+    <path d="M33 12h1052a14 14 0 0 1 14 14v20H19v-20a14 14 0 0 1 14 -14Z" class="front-header"/>
+    <path d="M18 46H1100" class="rule front"/>
+    <text x="559" y="36" class="layer-title" text-anchor="middle">Frontend（Vue 3 + TypeScript + Vite）</text>
+    <g id="frontend-resume">
+    <text x="138.5" y="64" class="group-label" text-anchor="middle">简历</text>
+    <rect x="35" y="74" width="100" height="47" rx="8" class="tile resume"/>
+    <text x="85" y="104" class="part" text-anchor="middle">简历分析</text>
+    <rect x="142" y="74" width="100" height="47" rx="8" class="tile resume"/>
+    <text x="192" y="104" class="part" text-anchor="middle">简历库</text>
   </g>
-  <g id="frontend-backend">
-    <path d="M577 265V315" class="wire" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-    <text x="599" y="297" class="protocol" text-anchor="start">REST · SSE · WebSocket</text>
+    <g id="frontend-interview">
+    <text x="548" y="64" class="group-label" text-anchor="middle">面试</text>
+    <rect x="274" y="74" width="104" height="47" rx="8" class="tile interview"/>
+    <text x="326" y="104" class="part" text-anchor="middle">面试中心</text>
+    <rect x="385" y="74" width="104" height="47" rx="8" class="tile interview"/>
+    <text x="437" y="104" class="part" text-anchor="middle">文字面试</text>
+    <rect x="496" y="74" width="104" height="47" rx="8" class="tile interview"/>
+    <text x="548" y="104" class="part" text-anchor="middle">面试记录</text>
+    <rect x="607" y="74" width="104" height="47" rx="8" class="tile interview"/>
+    <text x="659" y="104" class="part" text-anchor="middle">语音面试</text>
+    <rect x="718" y="74" width="104" height="47" rx="8" class="tile interview"/>
+    <text x="770" y="104" class="part" text-anchor="middle">面试日程</text>
+  </g>
+    <g id="frontend-knowledge">
+    <text x="970" y="64" class="group-label" text-anchor="middle">知识库</text>
+    <rect x="865" y="74" width="101.5" height="47" rx="8" class="tile knowledge"/>
+    <text x="915.75" y="104" class="part" text-anchor="middle">知识库管理</text>
+    <rect x="973.5" y="74" width="101.5" height="47" rx="8" class="tile knowledge"/>
+    <text x="1024.25" y="104" class="part" text-anchor="middle">问答助手</text>
+  </g>
+  </g>
+  <g id="browser-transport">
+    <path d="M559 163V244" class="wire" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <rect x="398" y="194" width="322" height="25" rx="0" class="canvas"/>
+    <text x="559" y="213" class="protocol" text-anchor="middle">REST / SSE / WebSocket</text>
   </g>
   <g id="backend">
-    <rect x="52" y="326" width="1050" height="456" rx="18" class="panel backend-panel"/>
-    <rect x="53" y="327" width="1048" height="52" rx="17" class="back-band"/>
-    <text x="76" y="361" class="heading" text-anchor="start">后端应用</text>
-    <text x="1079" y="361" class="meta" text-anchor="end">Spring Boot 3.5 · Java 21</text>
-    <text x="76" y="410" class="section-title" text-anchor="start">接入层</text>
-    <rect x="74" y="420" width="327.3333333333333" height="58" rx="12" class="tile ingress"/>
-    <text x="90" y="456" class="tile-title" text-anchor="start">REST API</text>
-    <text x="385.3333333333333" y="456" class="tile-sub" text-anchor="end">业务请求</text>
-    <rect x="413.3333333333333" y="420" width="327.3333333333333" height="58" rx="12" class="tile ingress"/>
-    <text x="429.3333333333333" y="456" class="tile-title" text-anchor="start">SSE 流式响应</text>
-    <text x="724.6666666666666" y="456" class="tile-sub" text-anchor="end">知识库问答</text>
-    <rect x="752.6666666666666" y="420" width="327.3333333333333" height="58" rx="12" class="tile ingress"/>
-    <text x="768.6666666666666" y="456" class="tile-title" text-anchor="start">WebSocket</text>
-    <text x="1064" y="456" class="tile-sub" text-anchor="end">实时语音</text>
-    <text x="76" y="507" class="section-title" text-anchor="start">业务服务</text>
-    <rect x="74" y="519" width="191.6" height="53" rx="12" class="tile service"/>
-    <text x="169.8" y="552" class="tile-title" text-anchor="middle">简历与报告</text>
-    <rect x="277.6" y="519" width="191.6" height="53" rx="12" class="tile service"/>
-    <text x="373.40000000000003" y="552" class="tile-title" text-anchor="middle">面试会话</text>
-    <rect x="481.2" y="519" width="191.6" height="53" rx="12" class="tile service"/>
-    <text x="577" y="552" class="tile-title" text-anchor="middle">语音转写</text>
-    <rect x="684.8" y="519" width="191.6" height="53" rx="12" class="tile service"/>
-    <text x="780.5999999999999" y="552" class="tile-title" text-anchor="middle">日程管理</text>
-    <rect x="888.4" y="519" width="191.6" height="53" rx="12" class="tile service"/>
-    <text x="984.1999999999999" y="552" class="tile-title" text-anchor="middle">知识库与题库</text>
-    <text x="76" y="603" class="section-title" text-anchor="start">检索、异步与模型接入</text>
-    <rect x="74" y="618" width="327.3333333333333" height="135" rx="12" class="tile ability"/>
-    <text x="91" y="651" class="tile-title" text-anchor="start">RAG 检索与引用</text>
-    <text x="91" y="680" class="body" text-anchor="start">文档分块 · Embedding</text>
-    <text x="91" y="704" class="body" text-anchor="start">pgvector 召回＋关键词评分</text>
-    <text x="91" y="728" class="body" text-anchor="start">问答原文引用</text>
-    <rect x="413.3333333333333" y="618" width="327.3333333333333" height="135" rx="12" class="tile queue"/>
-    <text x="430.3333333333333" y="651" class="tile-title" text-anchor="start">简历分析消费者</text>
-    <text x="430.3333333333333" y="680" class="body" text-anchor="start">Redis Stream 消费组</text>
-    <text x="430.3333333333333" y="704" class="body" text-anchor="start">结果落库后确认消息</text>
-    <text x="430.3333333333333" y="728" class="body" text-anchor="start">失败重试与任务恢复</text>
-    <rect x="752.6666666666666" y="618" width="327.3333333333333" height="135" rx="12" class="tile model"/>
-    <text x="769.6666666666666" y="651" class="tile-title" text-anchor="start">多模型网关</text>
-    <text x="769.6666666666666" y="680" class="body" text-anchor="start">OpenAI 兼容接口</text>
-    <text x="769.6666666666666" y="704" class="body" text-anchor="start">聊天与向量模型独立配置</text>
-    <text x="769.6666666666666" y="728" class="body" text-anchor="start">文字面试可单独指定服务</text>
+    <rect x="10" y="251" width="1130" height="404" rx="15" class="outline back"/>
+    <path d="M25 252h1100a14 14 0 0 1 14 14v20H11v-20a14 14 0 0 1 14 -14Z" class="back-header"/>
+    <path d="M10 286H1140" class="rule back"/>
+    <text x="575" y="276" class="layer-title" text-anchor="middle">Backend（Spring Boot 3.5 + Java 21）</text>
+    <rect x="34" y="304" width="1082" height="39" rx="1" class="tile service"/>
+    <text x="575" y="330" class="row-title" text-anchor="middle">REST Controllers + SSE + WebSocket Handler</text>
+    <rect x="34" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="119.16666666666667" y="377" class="part small" text-anchor="middle">简历分析</text>
+    <text x="119.16666666666667" y="394" class="part small" text-anchor="middle">报告导出</text>
+    <rect x="216.33333333333334" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="301.5" y="387" class="part" text-anchor="middle">文字面试</text>
+    <rect x="398.6666666666667" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="483.83333333333337" y="387" class="part" text-anchor="middle">语音面试</text>
+    <rect x="581" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="666.1666666666666" y="387" class="part" text-anchor="middle">面试日程</text>
+    <rect x="763.3333333333334" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="848.5" y="377" class="part small" text-anchor="middle">知识库管理</text>
+    <text x="848.5" y="394" class="part small" text-anchor="middle">题库练习</text>
+    <rect x="945.6666666666667" y="356" width="170.33333333333334" height="50" rx="1" class="tile service"/>
+    <text x="1030.8333333333335" y="387" class="part" text-anchor="middle">RAG 问答</text>
+    <g id="ai-capabilities">
+    <rect x="34" y="419" width="1082" height="78" rx="10" class="outline capabilities"/>
+    <path d="M44 420h1062a9 9 0 0 1 9 9v17H35v-17a9 9 0 0 1 9 -9Z" class="capabilities-header"/>
+    <path d="M34 446H1116" class="rule capabilities"/>
+    <text x="575" y="438" class="group-title" text-anchor="middle">AI 能力</text>
+    <rect x="46" y="454" width="345.3333333333333" height="33" rx="6" class="tile capabilities"/>
+    <text x="218.66666666666666" y="476" class="part small" text-anchor="middle">主题出题与历史去重</text>
+    <rect x="402.3333333333333" y="454" width="345.3333333333333" height="33" rx="6" class="tile capabilities"/>
+    <text x="575" y="476" class="part small" text-anchor="middle">文字与语音面试反馈</text>
+    <rect x="758.6666666666666" y="454" width="345.3333333333333" height="33" rx="6" class="tile capabilities"/>
+    <text x="931.3333333333333" y="476" class="part small" text-anchor="middle">RAG 混合检索与原文引用</text>
   </g>
-  <g id="external-link">
-    <path d="M1113 573H1207" class="wire dashed" marker-end="url(#arrow)"/>
-    <text x="1160" y="555" class="protocol small" text-anchor="middle">HTTP / WSS</text>
+    <g id="async-workers">
+    <rect x="34" y="510" width="1082" height="78" rx="10" class="outline worker"/>
+    <path d="M44 511h1062a9 9 0 0 1 9 9v17H35v-17a9 9 0 0 1 9 -9Z" class="worker-header"/>
+    <path d="M34 537H1116" class="rule worker"/>
+    <text x="575" y="529" class="group-title" text-anchor="middle">异步任务（Redis Stream 消费组）</text>
+    <rect x="46" y="545" width="256.25" height="33" rx="6" class="tile worker"/>
+    <text x="174.125" y="567" class="part small" text-anchor="middle">投递简历任务</text>
+    <rect x="313.25" y="545" width="256.25" height="33" rx="6" class="tile worker"/>
+    <text x="441.375" y="567" class="part small" text-anchor="middle">模型分析</text>
+    <rect x="580.5" y="545" width="256.25" height="33" rx="6" class="tile worker"/>
+    <text x="708.625" y="567" class="part small" text-anchor="middle">结果落库与确认</text>
+    <rect x="847.75" y="545" width="256.25" height="33" rx="6" class="tile worker"/>
+    <text x="975.875" y="567" class="part small" text-anchor="middle">重试与恢复</text>
+  </g>
+    <rect x="34" y="601" width="1082" height="36" rx="1" class="tile gateway"/>
+    <text x="575" y="625" class="group-title" text-anchor="middle">ModelGateway（OpenAI 兼容聊天与向量接口）</text>
+  </g>
+  <g id="model-transport">
+    <path d="M1145 530H1252" class="wire dashed" marker-end="url(#arrow)"/>
+    <text x="1197" y="555" class="protocol small" text-anchor="middle">HTTP / WSS</text>
   </g>
   <g id="external-models">
-    <rect x="1218" y="429" width="330" height="319" rx="18" class="panel cloud-panel"/>
-    <rect x="1219" y="430" width="328" height="52" rx="17" class="cloud-band"/>
-    <text x="1240" y="464" class="heading" text-anchor="start">外部模型服务</text>
-    <rect x="1236" y="496" width="294" height="66" rx="12" class="tile cloud"/>
-    <text x="1254" y="523" class="tile-title" text-anchor="start">聊天模型</text>
-    <text x="1254" y="546" class="tile-sub" text-anchor="start">简历分析 · 面试反馈 · 问答</text>
-    <rect x="1236" y="575" width="294" height="66" rx="12" class="tile cloud"/>
-    <text x="1254" y="602" class="tile-title" text-anchor="start">向量模型</text>
-    <text x="1254" y="625" class="tile-sub" text-anchor="start">生成文档与问题的向量</text>
-    <rect x="1236" y="654" width="294" height="66" rx="12" class="tile cloud"/>
-    <text x="1254" y="681" class="tile-title" text-anchor="start">百炼 Fun-ASR</text>
-    <text x="1254" y="704" class="tile-sub" text-anchor="start">可选云端实时转写</text>
+    <rect x="1260" y="425" width="323" height="216" rx="15" class="outline external"/>
+    <path d="M1275 426h293a14 14 0 0 1 14 14v20H1261v-20a14 14 0 0 1 14 -14Z" class="external-header"/>
+    <path d="M1260 460H1583" class="rule external"/>
+    <text x="1421.5" y="450" class="layer-title" text-anchor="middle">外部模型服务</text>
+    <rect x="1280" y="477" width="283" height="37" rx="6" class="tile external"/>
+    <text x="1421.5" y="501" class="part small" text-anchor="middle">聊天模型（LLM）</text>
+    <rect x="1280" y="527" width="283" height="37" rx="6" class="tile external"/>
+    <text x="1421.5" y="551" class="part small" text-anchor="middle">向量模型（Embedding）</text>
+    <rect x="1280" y="577" width="283" height="37" rx="6" class="tile external"/>
+    <text x="1421.5" y="601" class="part small" text-anchor="middle">百炼 Fun-ASR（可选转写）</text>
   </g>
-  <g id="data-links">
-    <path d="M309 793V845" class="wire" marker-end="url(#arrow)"/>
-    <text x="331" y="826" class="protocol" text-anchor="start">JDBC 读写与向量检索</text>
-    <path d="M851 793V845" class="wire" marker-end="url(#arrow)"/>
-    <text x="873" y="826" class="protocol" text-anchor="start">投递、消费与确认</text>
+  <g id="persistence-links">
+    <path d="M230 659V782" class="wire" marker-end="url(#arrow)"/>
+    <rect x="121" y="709" width="218" height="38" rx="0" class="canvas"/>
+    <text x="230" y="725" class="protocol small" text-anchor="middle">业务数据 · 向量检索</text>
+    <text x="230" y="744" class="protocol small" text-anchor="middle">上传原件（BYTEA）</text>
+    <path d="M762 659V782" class="wire" marker-end="url(#arrow)"/>
+    <rect x="665" y="710" width="194" height="37" rx="0" class="canvas"/>
+    <text x="762" y="727" class="protocol small" text-anchor="middle">简历分析任务</text>
+    <text x="762" y="746" class="protocol small" text-anchor="middle">投递 · 消费 · 确认</text>
   </g>
   <g id="postgresql">
-    <rect x="52" y="857" width="515" height="94" rx="16" class="panel database-tile"/>
-    <g transform="translate(74 875)" class="database-icon">
-      <path d="M2 13v31c0 5.5 12 10 27 10s27-4.5 27-10V13"/>
-      <ellipse cx="29" cy="13" rx="27" ry="10"/>
-      <path d="M2 28c0 5.5 12 10 27 10s27-4.5 27-10" fill="none"/>
-    </g>
-    <text x="151" y="897" class="heading" text-anchor="start">PostgreSQL + pgvector</text>
-    <text x="151" y="928" class="tile-sub" text-anchor="start">业务记录 · 上传原件（BYTEA）· 文档向量</text>
+    <path d="M125 805V861c0 12 52.5 21 105 21s105 -9 105 -21v-56Z" class="cylinder postgres"/>
+    <ellipse cx="230" cy="805" rx="105" ry="19" class="cylinder postgres-top"/>
+    <text x="230" y="841" class="storage-title" text-anchor="middle">PostgreSQL</text>
+    <text x="230" y="864" class="storage-sub" text-anchor="middle">+ pgvector</text>
   </g>
   <g id="redis">
-    <rect x="595" y="857" width="507" height="94" rx="16" class="panel redis-tile"/>
-    <g transform="translate(618 873)" class="redis-icon">
-      <path d="M2 17 30 5l28 12-28 12z"/>
-      <path d="m2 28 28 12 28-12M2 39l28 12 28-12" fill="none"/>
-    </g>
-    <text x="694" y="897" class="heading" text-anchor="start">Redis Stream</text>
-    <text x="694" y="928" class="tile-sub" text-anchor="start">简历分析任务 ID 与版本</text>
+    <path d="M658 805V861c0 12 52 21 104 21s104 -9 104 -21v-56Z" class="cylinder redis"/>
+    <ellipse cx="762" cy="805" rx="104" ry="19" class="cylinder redis-top"/>
+    <text x="762" y="841" class="storage-title" text-anchor="middle">Redis</text>
+    <text x="762" y="864" class="storage-sub" text-anchor="middle">Stream</text>
   </g>
 </svg>
