@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,38 @@ class ModelWireTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("401")
                 .hasMessageNotContaining("server-only diagnostic");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void parsesServerSentDeltasAndSkipsUsageOnlyFrames() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            var body = new ObjectMapper().readTree(exchange.getRequestBody());
+            if (!body.path("stream").asBoolean()) {
+                send(exchange, 400, "expected stream request");
+                return;
+            }
+            send(exchange, 200, """
+                data: {"choices":[{"delta":{"content":"每周"}}]}
+
+                data: {"choices":[],"usage":{"total_tokens":22}}
+
+                data: {"choices":[{"delta":{"content":"三执行 [1]"}}]}
+
+                data: [DONE]
+
+                """);
+        });
+        server.start();
+        try {
+            var gateway = new ModelGateway(new ObjectMapper(), "unit-test",
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", "test-chat", "");
+            var deltas = new ArrayList<String>();
+            assertThat(gateway.stream("中文回答", "设备巡检", deltas::add)).isEqualTo("每周三执行 [1]");
+            assertThat(deltas).containsExactly("每周", "三执行 [1]");
         } finally {
             server.stop(0);
         }

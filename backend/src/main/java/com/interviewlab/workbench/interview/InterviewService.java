@@ -1,5 +1,6 @@
 package com.interviewlab.workbench.interview;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.interviewlab.workbench.ai.ModelGateway;
 import java.util.List;
@@ -31,35 +32,79 @@ class InterviewService {
         this.json = json;
     }
 
-    InterviewResponse create(String role) {
+    List<InterviewResponse.Summary> list() {
+        return repository.list();
+    }
+
+    InterviewResponse create(InterviewSettings settings) {
         String id = UUID.randomUUID().toString();
-        repository.create(id, role);
-        return response(id, find(id));
+        List<String> plans = InterviewQuestions.plan(settings).stream()
+            .map(question -> json.valueToTree(question).toString())
+            .toList();
+        return transactions.execute(status -> {
+            repository.create(id, settings, plans);
+            return response(find(id));
+        });
     }
 
     InterviewResponse get(String id) {
-        return response(id, find(id));
+        return response(find(id));
     }
 
     InterviewResponse answer(String id, int index, String answer) {
         InterviewRepository.Session session = find(id);
-        List<InterviewQuestions.Question> questions = InterviewQuestions.forRole(session.role());
-        if (session.index() >= questions.size()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "本场面试已完成。");
-        }
-        if (session.index() != index) {
-            throw staleQuestion();
+        checkCurrent(session, index);
+        if (session.summary().paused()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "面试已暂停，请先恢复。");
         }
 
-        InterviewQuestions.Question question = questions.get(index);
+        InterviewQuestions.Question question = currentQuestion(session);
         var saved = new InterviewResponse.Answer(question.text(), answer, feedback(question, answer), null);
         return transactions.execute(status -> {
             if (!repository.advance(id, index)) {
                 throw staleQuestion();
             }
             repository.insertAnswer(id, index, saved);
-            return response(id, find(id));
+            return response(find(id));
         });
+    }
+
+    InterviewResponse changeState(String id, int index, String action) {
+        return transactions.execute(status -> {
+            InterviewRepository.Session session = find(id);
+            checkCurrent(session, index);
+            boolean changed = switch (action) {
+                case "pause" -> repository.setPaused(id, index, true);
+                case "resume" -> repository.setPaused(id, index, false);
+                case "finish" -> repository.finish(id, index);
+                default -> throw new IllegalArgumentException("Unknown interview action");
+            };
+            if (!changed) {
+                throw staleQuestion();
+            }
+            return response(find(id));
+        });
+    }
+
+    private void checkCurrent(InterviewRepository.Session session, int index) {
+        if (session.summary().completed()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "本场面试已完成。");
+        }
+        if (session.summary().index() != index) {
+            throw staleQuestion();
+        }
+    }
+
+    private InterviewQuestions.Question currentQuestion(InterviewRepository.Session session) {
+        if (session.questionPlan() == null) {
+            // Meetings created before interview settings were introduced used the original fixed question order.
+            return InterviewQuestions.forRole(session.summary().role()).get(session.summary().index());
+        }
+        try {
+            return json.readValue(session.questionPlan(), InterviewQuestions.Question.class);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Unable to read saved interview question", ex);
+        }
     }
 
     private String feedback(InterviewQuestions.Question question, String answer) {
@@ -74,15 +119,15 @@ class InterviewService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "找不到这场面试。"));
     }
 
-    private InterviewResponse response(String id, InterviewRepository.Session session) {
-        List<InterviewQuestions.Question> questions = InterviewQuestions.forRole(session.role());
-        boolean completed = session.index() >= questions.size();
-        String currentQuestion = completed ? null : questions.get(session.index()).text();
-        return new InterviewResponse(id, session.role(), session.index(), questions.size(), currentQuestion,
-            completed, session.answers());
+    private InterviewResponse response(InterviewRepository.Session session) {
+        var summary = session.summary();
+        String question = summary.completed() ? null : currentQuestion(session).text();
+        return new InterviewResponse(summary.id(), summary.role(), summary.index(), summary.total(), question,
+            summary.completed(), session.answers(), summary.topic(), summary.difficulty(), summary.kind(),
+            summary.paused(), summary.createdAt(), summary.completedAt());
     }
 
     private ResponseStatusException staleQuestion() {
-        return new ResponseStatusException(HttpStatus.CONFLICT, "题目进度已变化，请刷新面试后继续。");
+        return new ResponseStatusException(HttpStatus.CONFLICT, "题目或面试状态已变化，请刷新后继续。");
     }
 }

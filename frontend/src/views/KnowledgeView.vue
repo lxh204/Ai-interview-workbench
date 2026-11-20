@@ -1,244 +1,300 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import {
-  api,
-  errorMessage,
-  json,
-  type KnowledgeDocument,
-  type KnowledgeResult,
-  type ServiceStatus,
-} from '../api'
+import { computed, onMounted, ref } from 'vue'
+import { api, errorMessage, json, type ServiceStatus } from '../api'
 import { knowledgeExample } from '../examples'
+import KnowledgeDialog from './KnowledgeDialog.vue'
+import { bankLink, chatLink, entityPath, knowledgeDate, knowledgeDocuments, withMethod, type Document } from './knowledge'
 
-defineProps<{ status?: ServiceStatus }>()
-
-const documents = ref<KnowledgeDocument[]>([])
-const loadingDocuments = ref(true)
-const documentError = ref('')
-const adding = ref(false)
-const showAdd = ref(false)
+const props = defineProps<{ status?: ServiceStatus }>()
+type UploadEntry = { file: File; state: 'ready' | 'sending' | 'saved' | 'error'; message?: string }
+const documents = ref<Document[]>([])
+const loading = ref(false)
+const busy = ref(false)
+const error = ref('')
+const formError = ref('')
+const notice = ref('')
+const search = ref('')
+const filterCategory = ref('')
+const indexFilter = ref('')
+const modal = ref<'import' | 'category' | 'delete'>()
+const selected = ref<Document>()
+const importMode = ref<'file' | 'text'>('file')
 const title = ref('')
-const text = ref('')
-const confirmDelete = ref<string>()
-const deleting = ref(false)
+const category = ref('')
+const content = ref('')
+const uploads = ref<UploadEntry[]>([])
+const fileInput = ref<HTMLInputElement>()
+const dropActive = ref(false)
 
-const question = ref('')
-const submittedQuestion = ref('')
-const asking = ref(false)
-const askError = ref('')
-const result = ref<KnowledgeResult>()
+const categories = computed(() => [...new Set(documents.value.map(document => document.category).filter(Boolean))].sort())
+const vectorCount = computed(() => documents.value.filter(document => document.vectorized).length)
+const chunks = computed(() => documents.value.reduce((total, document) => total + document.chunkCount, 0))
+const visible = computed(() => {
+  const needle = search.value.trim().toLocaleLowerCase()
+  return documents.value.filter(document =>
+    (!needle || [document.title, document.filename, document.category]
+      .some(value => value?.toLocaleLowerCase().includes(needle))) &&
+    (!filterCategory.value || (filterCategory.value === '__none' ? !document.category : document.category === filterCategory.value)) &&
+    (!indexFilter.value || document.vectorized === (indexFilter.value === 'vector')))
+})
+const canUpload = computed(() => uploads.value.some(entry => entry.state === 'ready' || entry.state === 'error'))
 
-async function loadDocuments() {
-  loadingDocuments.value = true
-  documentError.value = ''
-  try {
-    documents.value = await api<KnowledgeDocument[]>('/knowledge/documents')
-  } catch (failure) {
-    documentError.value = errorMessage(failure)
-  } finally {
-    loadingDocuments.value = false
+async function reload() {
+  loading.value = true
+  error.value = ''
+  try { documents.value = await api<Document[]>(knowledgeDocuments) }
+  catch (failure) { error.value = errorMessage(failure) }
+  finally { loading.value = false }
+}
+
+function openImport() {
+  title.value = ''
+  category.value = ''
+  content.value = ''
+  uploads.value = []
+  formError.value = ''
+  notice.value = ''
+  importMode.value = 'file'
+  modal.value = 'import'
+}
+
+onMounted(() => {
+  void reload()
+  if (location.hash.split('?')[0] === '#/knowledgebase/upload' || location.pathname === '/knowledgebase/upload') openImport()
+})
+
+function close() {
+  modal.value = undefined
+  selected.value = undefined
+  if (location.hash.startsWith('#/knowledgebase/upload') || location.pathname === '/knowledgebase/upload') {
+    location.hash = '/knowledgebase'
   }
 }
 
-onMounted(() => void loadDocuments())
+function addFiles(files: FileList | null) {
+  if (!files || busy.value) return
+  formError.value = ''
+  for (const file of files) {
+    if (uploads.value.length >= 10) {
+      formError.value = '每批最多选择 10 个文件。'
+      break
+    }
+    if (uploads.value.some(entry => entry.file.name === file.name && entry.file.lastModified === file.lastModified)) continue
+    if (!/\.(pdf|txt|md)$/i.test(file.name) || file.size === 0 || file.size > 5 * 1024 * 1024) {
+      formError.value = '请选择 5 MB 以内且有内容的 PDF、TXT 或 Markdown。'
+      continue
+    }
+    uploads.value.push({ file, state: 'ready' })
+  }
+  if (fileInput.value) fileInput.value.value = ''
+}
 
-function useExample() {
-  title.value = knowledgeExample.title
-  text.value = knowledgeExample.text
-  question.value = knowledgeExample.question
-  showAdd.value = true
+function drop(event: DragEvent) {
+  dropActive.value = false
+  addFiles(event.dataTransfer?.files ?? null)
 }
 
 async function addDocument() {
-  if (!title.value.trim() || !text.value.trim() || adding.value) return
-  adding.value = true
-  documentError.value = ''
+  if (busy.value) return
+  busy.value = true
+  formError.value = ''
   try {
-    const document = await api<KnowledgeDocument>(
-      '/knowledge/documents',
-      json({ title: title.value.trim(), text: text.value.trim() }),
-    )
-    documents.value = [document, ...documents.value]
-    title.value = ''
-    text.value = ''
-    showAdd.value = false
+    if (importMode.value === 'text') {
+      const document = await api<Document>(knowledgeDocuments, json({
+        title: title.value.trim(), text: content.value.trim(), category: category.value.trim(),
+      }))
+      documents.value.unshift(document)
+      notice.value = '资料已保存，可以开始问答或创建题目。'
+      close()
+      return
+    }
+    for (const entry of uploads.value) {
+      if (entry.state === 'saved') continue
+      entry.state = 'sending'
+      entry.message = undefined
+      const body = new FormData()
+      body.set('file', entry.file)
+      body.set('category', category.value.trim())
+      if (uploads.value.length === 1 && title.value.trim()) body.set('title', title.value.trim())
+      try {
+        const document = await api<Document>(knowledgeDocuments + '/upload', { method: 'POST', body })
+        documents.value.unshift(document)
+        entry.state = 'saved'
+      } catch (failure) {
+        entry.state = 'error'
+        entry.message = errorMessage(failure)
+      }
+    }
+    const count = uploads.value.filter(entry => entry.state === 'saved').length
+    if (count) notice.value = '已导入 ' + count + ' 份资料。'
+    if (count === uploads.value.length) close()
   } catch (failure) {
-    documentError.value = errorMessage(failure)
+    formError.value = errorMessage(failure)
   } finally {
-    adding.value = false
+    busy.value = false
   }
 }
 
-async function deleteDocument(id: string) {
-  if (deleting.value) return
-  deleting.value = true
-  documentError.value = ''
+function prepare(action: 'category' | 'delete', document: Document) {
+  selected.value = document
+  category.value = document.category
+  formError.value = ''
+  modal.value = action
+}
+
+async function updateDocument() {
+  if (!selected.value || busy.value) return
+  busy.value = true
+  formError.value = ''
+  const id = selected.value.id
+  const path = entityPath(knowledgeDocuments, id)
   try {
-    await api<void>('/knowledge/documents/' + encodeURIComponent(id), { method: 'DELETE' })
-    documents.value = documents.value.filter((document) => document.id !== id)
-    confirmDelete.value = undefined
+    if (modal.value === 'delete') {
+      await api<void>(path, { method: 'DELETE' })
+      documents.value = documents.value.filter(document => document.id !== id)
+      notice.value = '资料已删除。'
+    } else {
+      const updated = await api<Document>(path, withMethod('PATCH', { category: category.value.trim() }))
+      documents.value = documents.value.map(document => document.id === id ? updated : document)
+      notice.value = '分类已保存。'
+    }
+    close()
   } catch (failure) {
-    documentError.value = errorMessage(failure)
+    formError.value = errorMessage(failure)
   } finally {
-    deleting.value = false
+    busy.value = false
   }
 }
 
-async function ask() {
-  if (!question.value.trim() || asking.value) return
-  asking.value = true
-  askError.value = ''
-  result.value = undefined
-  submittedQuestion.value = question.value.trim()
+async function reindex(document: Document) {
+  if (busy.value) return
+  busy.value = true
+  error.value = ''
+  notice.value = '正在更新检索索引…'
   try {
-    result.value = await api<KnowledgeResult>('/knowledge/ask', json({ question: submittedQuestion.value }))
+    const updated = await api<Document>(entityPath(knowledgeDocuments, document.id) + '/index', { method: 'POST' })
+    documents.value = documents.value.map(row => row.id === updated.id ? updated : row)
+    notice.value = updated.vectorized ? '已更新向量索引。' : '关键词索引可用。连接嵌入模型后可添加向量索引。'
   } catch (failure) {
-    askError.value = errorMessage(failure)
+    notice.value = ''
+    error.value = errorMessage(failure)
   } finally {
-    asking.value = false
+    busy.value = false
   }
 }
 </script>
 
 <template>
-  <div class="panel-grid knowledge-grid">
-    <section class="panel" aria-labelledby="ask-heading" :aria-busy="asking">
-      <header class="panel-heading">
-        <h2 id="ask-heading">向知识库提问</h2>
-        <span v-if="status" class="chip">{{ status.retrieval === 'hybrid' ? '混合检索' : '关键词检索' }}</span>
-      </header>
+  <div class="knowledge-workspace">
+    <header class="knowledge-header page-header">
+      <div><h1>知识库管理</h1><p>导入技术资料、项目文档和复习笔记。每份资料都可以用于问答和练习。</p></div>
+      <div class="knowledge-actions">
+        <a class="button secondary" href="#/knowledgebase/chat">问答助手</a>
+        <button class="button primary" type="button" @click="openImport"><span aria-hidden="true">＋</span> 导入资料</button>
+      </div>
+    </header>
+    <div class="knowledge-stats">
+      <div><small>知识库文档</small><strong>{{ documents.length }}</strong></div>
+      <div><small>可检索片段</small><strong>{{ chunks }}</strong></div>
+      <div><small>已有向量索引</small><strong>{{ vectorCount }}</strong></div>
+    </div>
 
-      <form class="field-list" @submit.prevent="ask">
-        <label class="field">
-          <span class="sr-only">问题</span>
-          <textarea
-            v-model="question"
-            :disabled="asking"
-            maxlength="500"
-            rows="4"
-            placeholder="例如，Spring 事务为什么在同一个对象内部调用时可能失效？"
-          ></textarea>
-          <small class="counter">{{ question.length }} / 500</small>
-        </label>
-        <button type="submit" class="button primary full-width" :disabled="!question.trim() || asking">
-          {{ asking ? '正在检索资料…' : '检索并回答' }}
-        </button>
-        <p v-if="askError" class="error" role="alert">{{ askError }}</p>
-      </form>
+    <p v-if="notice" class="knowledge-notice" role="status">{{ notice }}</p>
+    <p v-if="error" class="error" role="alert">{{ error }} <button class="button small secondary" @click="reload">重试</button></p>
+    <section class="knowledge-panel" aria-label="资料列表" :aria-busy="loading">
+      <div class="knowledge-toolbar">
+        <label class="knowledge-search"><span class="sr-only">搜索资料</span><input v-model="search" type="search" placeholder="搜索文档名称或分类…"></label>
+        <select v-model="filterCategory" aria-label="筛选资料分类">
+          <option value="">所有分类</option><option value="__none">未分类</option>
+          <option v-for="item in categories" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <select v-model="indexFilter" aria-label="筛选索引类型">
+          <option value="">所有索引</option><option value="vector">向量索引</option><option value="keyword">关键词索引</option>
+        </select>
+        <button class="button secondary" type="button" :disabled="loading || busy" @click="reload">刷新</button>
+      </div>
+      <p class="knowledge-list-caption muted">共 {{ visible.length }} 份资料</p>
+      <p v-if="loading" class="knowledge-empty" role="status">正在加载资料…</p>
+      <div v-else-if="!visible.length" class="knowledge-empty">
+        <span class="knowledge-empty-icon glyph glyph-knowledge" aria-hidden="true"></span>
+        <h2>{{ documents.length ? '没有匹配的资料' : '还没有知识库文档' }}</h2>
+        <p>{{ documents.length ? '换个搜索词或清除筛选条件。' : '导入资料后，可以查阅原文、创建题目并练习。' }}</p>
+        <button v-if="documents.length" class="button secondary" @click="search = ''; filterCategory = ''; indexFilter = ''">清除筛选</button>
+        <button v-else class="button primary" @click="openImport">导入第一份资料</button>
+      </div>
+      <div v-else class="knowledge-table-wrap">
+        <table class="knowledge-table">
+          <thead><tr><th>文档</th><th>分类</th><th>片段</th><th>检索索引</th><th>添加时间</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="document in visible" :key="document.id">
+              <td class="knowledge-document-title"><strong>{{ document.title }}</strong><small class="muted">{{ document.filename || '文本笔记' }}</small></td>
+              <td><button class="button small secondary" :aria-label="'编辑分类 ' + document.title" :disabled="busy" @click="prepare('category', document)">{{ document.category || '未分类' }}</button></td>
+              <td>{{ document.chunkCount }}</td>
+              <td><span class="knowledge-badge" :class="{ success: document.vectorized }">{{ document.vectorized ? '向量已就绪' : '关键词已就绪' }}</span></td>
+              <td class="knowledge-date">{{ knowledgeDate(document.createdAt) }}</td>
+              <td><div class="knowledge-actions knowledge-row-actions">
+                <a class="button small secondary" :href="chatLink(document.id)">问答</a>
+                <a class="button small secondary" :href="bankLink(document.id)">题库</a>
+                <a class="button small secondary" :href="'/api' + entityPath(knowledgeDocuments, document.id) + '/download'" download>下载</a>
+                <button v-if="props.status?.retrieval === 'hybrid'" class="button small secondary" :disabled="busy" @click="reindex(document)">重建索引</button>
+                <button class="button small danger ghost" :disabled="busy" :aria-label="'删除 ' + document.title" @click="prepare('delete', document)">删除</button>
+              </div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-      <div class="knowledge-answer" aria-live="polite">
-        <template v-if="result">
-          <header class="panel-heading result-heading">
-            <h3>本次回答</h3>
-            <span class="chip">{{ result.mode === 'demo' ? '离线检索' : '模型回答' }}</span>
-          </header>
-          <p class="submitted-question">{{ submittedQuestion }}</p>
-          <p class="result-text">{{ result.answer }}</p>
-
-          <h3 class="sources-title">引用资料 <small>{{ result.sources.length }}</small></h3>
-          <ul v-if="result.sources.length" class="source-list">
-            <li v-for="source in result.sources" :key="source.documentId + '/' + source.chunkIndex">
-              <details class="disclosure">
-                <summary>
-                  <span>{{ source.title }}</span>
-                  <span class="chip">片段 {{ source.chunkIndex + 1 }}</span>
-                </summary>
-                <p class="result-text">{{ source.text }}</p>
-              </details>
-            </li>
-          </ul>
-          <p v-else class="muted">本次检索没有找到可引用的资料。</p>
-        </template>
-
-        <div v-else class="empty-state compact" role="status">
-          <span class="empty-icon"><span class="glyph glyph-knowledge" aria-hidden="true"></span></span>
-          <p>{{ asking ? '正在查找与你的问题相关的片段。' : '回答和引用片段会在这里显示。' }}</p>
+    <KnowledgeDialog v-if="modal === 'import'" title="导入知识库资料" :busy="busy" @close="close">
+      <form class="knowledge-form" @submit.prevent="addDocument">
+        <div class="knowledge-actions" role="group" aria-label="导入方式">
+          <button class="button" :class="importMode === 'file' ? 'primary' : 'secondary'" type="button" :disabled="busy" @click="importMode = 'file'">上传文件</button>
+          <button class="button" :class="importMode === 'text' ? 'primary' : 'secondary'" type="button" :disabled="busy" @click="importMode = 'text'">粘贴文本</button>
         </div>
-      </div>
-    </section>
-
-    <section class="panel output" aria-labelledby="documents-heading" :aria-busy="loadingDocuments">
-      <header class="panel-heading">
-        <h2 id="documents-heading">资料库</h2>
-        <span class="chip">{{ documents.length }} 份</span>
-      </header>
-
-      <div class="document-actions">
-        <button
-          type="button"
-          class="button secondary"
-          :disabled="adding"
-          :aria-expanded="showAdd"
-          aria-controls="add-document"
-          @click="showAdd = !showAdd"
-        >{{ showAdd ? '收起表单' : '添加资料' }}</button>
-        <button type="button" class="text-button" :disabled="adding || asking" @click="useExample">填入示例</button>
-      </div>
-
-      <form v-show="showAdd" id="add-document" class="field-list add-document" @submit.prevent="addDocument">
-        <fieldset :disabled="adding" class="field-list">
-          <label class="field">
-            <span>资料标题</span>
-            <input v-model="title" name="document-title" type="text" placeholder="例如，Spring 事务复习笔记">
-          </label>
-          <label class="field">
-            <span>资料正文</span>
-            <textarea
-              v-model="text"
-              name="document-text"
-              maxlength="60000"
-              rows="5"
-              placeholder="粘贴自己的笔记或资料正文。"
-            ></textarea>
-          </label>
-        </fieldset>
-        <button
-          type="submit"
-          class="button primary full-width"
-          :disabled="!title.trim() || !text.trim() || adding || loadingDocuments"
-        >{{ adding ? '正在保存…' : '保存资料' }}</button>
-      </form>
-
-      <p v-if="documentError" class="error" role="alert">{{ documentError }}</p>
-      <p v-if="loadingDocuments" class="muted" role="status">正在加载资料…</p>
-
-      <ul v-else-if="documents.length" class="document-list">
-        <li v-for="document in documents" :key="document.id" class="document-item">
-          <div class="document-row">
-            <span class="glyph glyph-resume" aria-hidden="true"></span>
-            <div class="document-info">
-              <strong>{{ document.title }}</strong>
-              <small>{{ document.chunkCount }} 个片段</small>
+        <fieldset class="knowledge-form" :disabled="busy">
+          <template v-if="importMode === 'file'">
+            <div class="knowledge-dropzone" :class="{ active: dropActive }" @dragover.prevent="dropActive = true" @dragleave="dropActive = false" @drop.prevent="drop">
+              <strong>拖放资料或选择文件</strong><small>PDF、UTF-8 TXT、Markdown，每份最多 5 MB。</small>
+              <button type="button" class="button secondary" @click="fileInput?.click()">选择文件</button>
+              <input ref="fileInput" class="sr-only" type="file" accept=".pdf,.txt,.md" multiple aria-label="选择资料文件" @change="addFiles(($event.target as HTMLInputElement).files)">
             </div>
-            <button
-              type="button"
-              class="text-button quiet"
-              :aria-label="'删除 ' + document.title"
-              :disabled="deleting"
-              @click="confirmDelete = document.id"
-            >删除</button>
-          </div>
-          <div v-if="confirmDelete === document.id" class="confirmation">
-            <p>删除这份资料及其检索片段？</p>
-            <button type="button" class="text-button" :disabled="deleting" @click="deleteDocument(document.id)">
-              {{ deleting ? '正在删除…' : '确认删除' }}
-            </button>
-            <button type="button" class="text-button quiet" :disabled="deleting" @click="confirmDelete = undefined">
-              取消
-            </button>
-          </div>
-        </li>
-      </ul>
+            <ul v-if="uploads.length" class="knowledge-uploads">
+              <li v-for="(entry, index) in uploads" :key="entry.file.name + entry.file.lastModified">
+                <div class="knowledge-row"><strong>{{ entry.file.name }}</strong>
+                  <span v-if="entry.state !== 'ready'" class="knowledge-badge" :class="{ success: entry.state === 'saved' }">{{ { ready: '', sending: '解析并建立索引…', saved: '已导入', error: '导入失败' }[entry.state] }}</span>
+                  <button v-if="entry.state !== 'saved'" class="button small secondary" type="button" :disabled="busy" @click="uploads.splice(index, 1)">移除</button>
+                </div>
+                <small v-if="entry.message" class="error">{{ entry.message }}</small>
+              </li>
+            </ul>
+            <label v-if="uploads.length === 1" class="field">文档名称<input v-model="title" maxlength="100" placeholder="默认使用文件名"></label>
+          </template>
+          <template v-else>
+            <label class="field">资料标题<input v-model="title" maxlength="100" required placeholder="例如 Spring 事务复习笔记"></label>
+            <label class="field">资料正文<textarea v-model="content" rows="7" maxlength="60000" required placeholder="粘贴可检索的笔记正文。"></textarea></label>
+            <button class="button small secondary" type="button" @click="title = knowledgeExample.title; content = knowledgeExample.text">填入示例</button>
+          </template>
+          <label class="field">分类 <small class="muted">选填</small><input v-model="category" maxlength="100" list="knowledge-categories" placeholder="例如 Java、数据库、项目资料"></label>
+        </fieldset>
+        <p v-if="formError" class="error" role="alert">{{ formError }}</p>
+        <div class="knowledge-actions knowledge-end">
+          <button type="button" class="button secondary" :disabled="busy" @click="close">取消</button>
+          <button class="button primary" :disabled="busy || (importMode === 'file' ? !canUpload : !title.trim() || !content.trim())">{{ busy ? '导入中…' : '导入资料' }}</button>
+        </div>
+      </form>
+    </KnowledgeDialog>
 
-      <div v-else-if="documentError" class="empty-state compact">
-        <button type="button" class="button secondary" @click="loadDocuments">重新加载资料</button>
-      </div>
-
-      <div v-else class="empty-state compact">
-        <span class="empty-icon"><span class="glyph glyph-resume" aria-hidden="true"></span></span>
-        <strong>暂无资料</strong>
-        <p>添加复习笔记后，就可以用它们查找答案。</p>
-      </div>
-    </section>
+    <KnowledgeDialog v-if="modal === 'category' || modal === 'delete'" :title="modal === 'category' ? '编辑分类' : '删除资料'" :busy="busy" @close="close">
+      <form class="knowledge-form" @submit.prevent="updateDocument">
+        <label v-if="modal === 'category'" class="field">分类<input v-model="category" maxlength="100" list="knowledge-categories" placeholder="留空为未分类" :disabled="busy"></label>
+        <p v-else>确认删除「{{ selected?.title }}」及其检索片段和题库？</p>
+        <p v-if="formError" class="error" role="alert">{{ formError }}</p>
+        <div class="knowledge-actions knowledge-end">
+          <button type="button" class="button secondary" :disabled="busy" @click="close">取消</button>
+          <button class="button" :class="modal === 'delete' ? 'danger' : 'primary'" :disabled="busy">{{ modal === 'delete' ? '确认删除' : '保存分类' }}</button>
+        </div>
+      </form>
+    </KnowledgeDialog>
+    <datalist id="knowledge-categories"><option v-for="item in categories" :key="item" :value="item" /></datalist>
   </div>
 </template>

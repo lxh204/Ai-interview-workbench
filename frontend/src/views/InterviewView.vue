@@ -1,225 +1,90 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ApiError, api, errorMessage, json, roles, type Interview, type Role } from '../api'
-import { interviewExamples } from '../examples'
+import { computed, ref } from 'vue'
+import InterviewAnswers from './InterviewAnswers.vue'
+import InterviewSetup from './InterviewSetup.vue'
+import { difficulties, interviewRoles, pathId, reportLink, sessionLink, topicOptions, useInterviewLocation, useInterviewSession } from './interviewFlow'
 
-const storageKey = 'houchang.interview'
-const role = ref<Role>('java')
-const answer = ref('')
-const session = ref<Interview>()
-const savedId = ref<string>()
-const pending = ref(false)
-const error = ref('')
-const abandonPrompt = ref(false)
-const completedCount = computed(() => session.value?.answers.length ?? 0)
+const location = useInterviewLocation()
+const routeId = computed(() => pathId(location.value, '#/interview/session/'))
+const { session, answer, error, pending, restore, start, submit, setState } = useInterviewSession(() => routeId.value)
+const finishing = ref(false)
 
-function remember(id?: string) {
-  savedId.value = id
-  try {
-    if (id) localStorage.setItem(storageKey, id)
-    else localStorage.removeItem(storageKey)
-  } catch {
-    // The session remains available for this visit when storage is disabled.
-  }
-}
-
-async function restore(id: string) {
-  pending.value = true
-  error.value = ''
-  try {
-    session.value = await api<Interview>('/interviews/' + encodeURIComponent(id))
-    role.value = session.value.role
-  } catch (failure) {
-    if (failure instanceof ApiError && failure.status === 404) {
-      session.value = undefined
-      remember()
-      error.value = '这轮面试已不可用，可以开始新一轮。'
-    } else {
-      error.value = errorMessage(failure)
-    }
-  } finally {
-    pending.value = false
-  }
-}
-
-onMounted(() => {
-  try {
-    const id = localStorage.getItem(storageKey)
-    if (id) {
-      savedId.value = id
-      void restore(id)
-    }
-  } catch {
-    // Storage is optional. The start button remains usable.
-  }
-})
-
-async function start() {
-  if (pending.value) return
-  pending.value = true
-  error.value = ''
-  try {
-    session.value = await api<Interview>('/interviews', json({ role: role.value }))
-    remember(session.value.id)
-  } catch (failure) {
-    error.value = errorMessage(failure)
-  } finally {
-    pending.value = false
-  }
-}
-
-function clearSession() {
-  session.value = undefined
-  answer.value = ''
-  error.value = ''
-  abandonPrompt.value = false
-  remember()
-}
-
-async function submitAnswer() {
-  const active = session.value
-  if (!active || active.completed || !answer.value.trim() || pending.value) return
-  pending.value = true
-  error.value = ''
-  try {
-    session.value = await api<Interview>(
-      '/interviews/' + encodeURIComponent(active.id) + '/answers',
-      json({ index: active.index, answer: answer.value.trim() }),
-    )
-    answer.value = ''
-  } catch (failure) {
-    if (failure instanceof ApiError && failure.status === 409) {
-      await restore(active.id)
-      if (session.value?.index !== active.index || session.value?.completed) answer.value = ''
-      if (!error.value) error.value = '面试进度已更新，请查看当前题目与反馈。'
-    } else {
-      error.value = errorMessage(failure)
-    }
-  } finally {
-    pending.value = false
-  }
+async function finish() {
+  finishing.value = false
+  await setState('finish')
 }
 </script>
 
 <template>
-  <div class="panel-grid">
+  <header class="page-header">
+    <h1>{{ routeId ? '文字面试' : '模拟面试' }}</h1>
+    <div v-if="!routeId" class="page-actions">
+      <a class="button secondary" href="#/interviews">面试记录</a>
+      <a class="button secondary" href="#/knowledgebase-interview">知识库面试</a>
+    </div>
+  </header>
+  <InterviewSetup v-if="!routeId" kind="text" :pending="pending" @start="start" />
+  <section v-else-if="!session" class="panel field-list" :aria-busy="pending">
+    <p v-if="pending" role="status">正在读取面试进度…</p>
+    <div v-else class="session-actions">
+      <button class="button secondary" type="button" @click="restore(routeId)">重试读取</button>
+      <a class="button primary" href="#/interviews">面试记录</a>
+    </div>
+  </section>
+  <div v-else class="panel-grid interview-grid">
     <section class="panel" aria-labelledby="interview-heading" :aria-busy="pending">
       <header class="panel-heading">
-        <h2 id="interview-heading">{{ session ? '本轮面试' : '开始面试' }}</h2>
-        <span v-if="session" class="chip">{{ roles[session.role] }}</span>
+        <h2 id="interview-heading">{{ topicOptions[session.topic].label }}</h2>
+        <span class="chip">{{ interviewRoles[session.role] }}</span>
       </header>
-
-      <form v-if="!session && !savedId" class="field-list" @submit.prevent="start">
-        <fieldset class="role-options" :disabled="pending">
-          <legend>选择练习方向</legend>
-          <label class="role-option">
-            <input v-model="role" type="radio" value="java" name="interview-role">
-            <span>
-              <strong>{{ roles.java }}</strong>
-              <small>Java 基础、Spring、数据库与缓存</small>
-            </span>
-          </label>
-          <label class="role-option">
-            <input v-model="role" type="radio" value="ai" name="interview-role">
-            <span>
-              <strong>{{ roles.ai }}</strong>
-              <small>模型调用、知识检索与结果评估</small>
-            </span>
-          </label>
-        </fieldset>
-        <button type="submit" class="button primary full-width" :disabled="pending">
-          {{ pending ? '正在创建面试…' : '开始面试' }}
+      <p class="result-context">{{ difficulties[session.difficulty] }}</p>
+      <div class="progress-area">
+        <label class="result-context" for="interview-progress">作答进度 <span>{{ session.index }} / {{ session.total }}</span></label>
+        <progress id="interview-progress" :max="session.total" :value="session.index"></progress>
+      </div>
+      <div v-if="session.kind === 'voice'" class="empty-state">
+        <strong>这是一场语音面试</strong>
+        <a class="button primary" :href="sessionLink(session.id, session.kind)">进入语音面试</a>
+      </div>
+      <div v-else-if="session.completed" class="interview-complete">
+        <h3>本轮面试已完成</h3>
+        <a class="button primary" :href="reportLink(session.id)">查看面试报告</a>
+      </div>
+      <form v-else-if="session.question" class="field-list" @submit.prevent="submit">
+        <div class="question-card" aria-live="polite">
+          <span>第 {{ session.index + 1 }} 题</span>
+          <p>{{ session.question }}</p>
+        </div>
+        <label class="field">
+          <span>你的回答</span>
+          <textarea v-model="answer" :disabled="pending" rows="7" maxlength="8000"
+                    placeholder="先说结论，再用例子和验证方法说明理由。"></textarea>
+        </label>
+        <button type="submit" class="button primary full-width" :disabled="!answer.trim() || pending">
+          {{ pending ? '正在获取反馈…' : '提交回答' }}
         </button>
       </form>
-
-      <div v-else-if="!session && savedId" class="field-list">
-        <p v-if="pending" role="status">正在恢复面试进度…</p>
-        <template v-else>
-          <button type="button" class="button primary" @click="restore(savedId)">重试恢复</button>
-          <button type="button" class="text-button" @click="clearSession">开始新一轮</button>
-        </template>
+      <div v-if="!session.completed && session.kind === 'text'" class="session-actions">
+        <a href="#/interviews" class="button secondary">稍后继续</a>
+        <button v-if="!finishing" type="button" class="text-button" :disabled="pending" @click="finishing = true">提前交卷</button>
+        <div v-else class="confirmation">
+          <p>确认交卷后，可在报告中回顾已提交的内容。</p>
+          <button type="button" class="text-button" :disabled="pending" @click="finish">确认交卷</button>
+          <button type="button" class="text-button quiet" @click="finishing = false">取消</button>
+        </div>
       </div>
-
-      <template v-else-if="session">
-        <div class="progress-area">
-          <label class="result-context" for="interview-progress">
-            {{ session.completed ? '练习完成' : '作答进度' }}
-            <span>{{ completedCount }} / {{ session.total }}</span>
-          </label>
-          <progress id="interview-progress" :max="session.total" :value="completedCount"></progress>
-        </div>
-
-        <div v-if="session.completed" class="interview-complete">
-          <h3>本轮面试已完成</h3>
-          <p>展开答题记录，回看你的回答和逐题反馈。</p>
-          <button type="button" class="button primary" @click="clearSession">开始新一轮</button>
-        </div>
-
-        <form v-else-if="session.question" class="field-list" @submit.prevent="submitAnswer">
-          <div class="question-card" aria-live="polite">
-            <span>第 {{ session.index + 1 }} 题</span>
-            <p>{{ session.question }}</p>
-          </div>
-          <label class="field">
-            <span>你的回答</span>
-            <textarea
-              v-model="answer"
-              :disabled="pending"
-              rows="6"
-              placeholder="可以先说结论，再用你理解的例子解释理由。"
-            ></textarea>
-          </label>
-          <button
-            v-if="!answer.trim()"
-            type="button"
-            class="text-button align-start"
-            :disabled="pending"
-            @click="answer = interviewExamples[session.role]"
-          >填入练习示例</button>
-          <button type="submit" class="button primary full-width" :disabled="!answer.trim() || pending">
-            {{ pending ? '正在获取反馈…' : '提交回答' }}
-          </button>
-        </form>
-
-        <div v-if="!session.completed" class="session-controls">
-          <div v-if="abandonPrompt" class="confirmation">
-            <p>结束当前练习并清除本机的恢复记录？</p>
-            <button type="button" class="text-button" :disabled="pending" @click="clearSession">确认结束</button>
-            <button type="button" class="text-button quiet" @click="abandonPrompt = false">取消</button>
-          </div>
-          <button v-else type="button" class="text-button quiet" :disabled="pending" @click="abandonPrompt = true">
-            结束当前练习
-          </button>
-        </div>
-      </template>
-      <p v-if="error" class="error" role="alert">{{ error }}</p>
     </section>
-
-    <section class="panel output" aria-labelledby="history-heading">
-      <header class="panel-heading">
-        <h2 id="history-heading">答题记录</h2>
-        <span v-if="completedCount" class="chip">{{ completedCount }} 道已答</span>
-      </header>
-      <ol v-if="session && completedCount" class="history-list">
-        <li v-for="(item, index) in session.answers" :key="index">
-          <details class="disclosure" :open="index === completedCount - 1">
-            <summary>
-              <span>第 {{ index + 1 }} 题</span>
-              <span v-if="item.score !== null" class="chip">{{ item.score }} 分</span>
-            </summary>
-            <h3 class="history-question">{{ item.question }}</h3>
-            <p class="result-context">你的回答</p>
-            <p class="result-text">{{ item.answer }}</p>
-            <p class="result-context">答题反馈</p>
-            <p class="result-text">{{ item.feedback }}</p>
-          </details>
-        </li>
-      </ol>
-      <div v-else class="empty-state">
-        <span class="empty-icon"><span class="glyph glyph-interview" aria-hidden="true"></span></span>
-        <strong>暂无作答记录</strong>
-        <p>每次提交后，回答和反馈都会保存在这里。</p>
-      </div>
+    <section class="panel output" aria-labelledby="interview-answers">
+      <header class="panel-heading"><h2 id="interview-answers">答题记录</h2><span class="chip">{{ session.index }} 道已答</span></header>
+      <InterviewAnswers :answers="session.answers" />
     </section>
   </div>
+  <p v-if="error" class="error" role="alert">{{ error }}</p>
 </template>
+
+<style scoped>
+.interview-grid { margin-top: 0; }
+.page-actions, .session-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.session-actions { margin-top: 16px; }
+.interview-complete h3 { margin-block: 0 12px; }
+</style>
