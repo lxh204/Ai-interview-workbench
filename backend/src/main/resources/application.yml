@@ -1,0 +1,24 @@
+server:
+  address: ${WORKBENCH_HOST:127.0.0.1}
+  port: ${WORKBENCH_PORT:8092}
+spring:
+  application:
+    name: interview-workbench
+  datasource:
+    url: ${WORKBENCH_DB_URL:jdbc:h2:file:./data/workbench;DB_CLOSE_ON_EXIT=FALSE;WRITE_DELAY=0}
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql,classpath:interview-schema.sql
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+workbench:
+  model:
+    api-key: ${AI_API_KEY:}
+    base-url: ${AI_BASE_URL:}
+    chat: ${AI_CHAT_MODEL:}
+    embedding: ${AI_EMBEDDING_MODEL:}

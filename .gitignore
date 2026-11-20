@@ -1,0 +1,17 @@
+# Runtime data and local credentials
+.env
+.env.*
+!.env.example
+data/
+*.mv.db
+*.trace.db
+
+# Build outputs and local editor files
+target/
+dist/
+node_modules/
+.playwright-cli/
+.idea/
+.vscode/
+*.iml
+*.log
