@@ -158,7 +158,7 @@ function syncRoute() {
   if (path.value !== next.page) window.scrollTo(0, 0)
   address.value = next
   showMenu.value = false
-  document.title = current.value.title + ' | AI Interview'
+  document.title = current.value.title + ' | AI Interview Workbench'
 }
 
 watch(dark, (value) => {
