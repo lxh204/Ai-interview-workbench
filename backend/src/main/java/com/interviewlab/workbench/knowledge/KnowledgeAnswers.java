@@ -19,16 +19,16 @@ class KnowledgeAnswers {
         """;
     private final KnowledgeDocuments documents;
     private final ModelGateway model;
+    private final KnowledgeVectorStore vectorStore;
 
-    KnowledgeAnswers(KnowledgeDocuments documents, ModelGateway model) {
+    KnowledgeAnswers(KnowledgeDocuments documents, ModelGateway model, KnowledgeVectorStore vectorStore) {
         this.documents = documents;
         this.model = model;
+        this.vectorStore = vectorStore;
     }
 
     Result ask(String question, List<String> scope, List<Turn> history, Consumer<String> onDelta) {
-        boolean useEmbedding = model.embeddingsEnabled();
-        List<Passage> available = documents.passages(scope, useEmbedding ? model.embeddingSpace() : "");
-        List<Passage> matches = retrieve(contextualQuery(question, history), available, useEmbedding);
+        List<Passage> matches = retrieve(contextualQuery(question, history), scope);
         if (matches.isEmpty()) {
             return new Result(model.mode(), "选定资料中没有找到与问题相关的片段。可以补充资料或更换问法。", List.of());
         }
@@ -51,10 +51,24 @@ class KnowledgeAnswers {
         return new Result("model", answer, sources);
     }
 
-    private List<Passage> retrieve(String question, List<Passage> available, boolean useEmbedding) {
-        double[] queryVector = useEmbedding && available.stream().anyMatch(passage -> passage.vector() != null)
+    private List<Passage> retrieve(String question, List<String> scope) {
+        String encoding = model.embeddingsEnabled() ? model.embeddingSpace() : "";
+        List<Passage> available = documents.passages(scope, encoding);
+        if (encoding.isEmpty() || available.isEmpty()) {
+            return PassageSearch.find(question, available, null);
+        }
+        if (vectorStore.usesPgvector()) {
+            if (vectorStore.anyIndexed(scope, encoding)) {
+                double[] queryVector = model.embed(List.of(question)).getFirst();
+                if (encoding.equals(model.embeddingSpace())) {
+                    return PassageSearch.findWithVectorScores(question, available, vectorStore.similarity(scope, encoding, queryVector));
+                }
+            }
+            return PassageSearch.find(question, available, null);
+        }
+        double[] queryVector = available.stream().anyMatch(passage -> passage.vector() != null)
             ? model.embed(List.of(question)).getFirst() : null;
-        return PassageSearch.find(question, available, queryVector);
+        return PassageSearch.find(question, available, encoding.equals(model.embeddingSpace()) ? queryVector : null);
     }
 
     private String contextualQuery(String question, List<Turn> history) {

@@ -170,8 +170,15 @@ public class ModelSettingsController {
 
     private void persistCurrent(ModelGateway.Configuration config) {
         jdbc.update("""
-            merge into model_settings(id, base_url, chat_model, embedding_model, encrypted_key)
-            key(id) values (1, ?, ?, ?, ?)
+            merge into model_settings as saved
+            using (values (1, cast(? as varchar(280)), cast(? as varchar(100)),
+                              cast(? as varchar(100)), cast(? as varchar(1100))))
+                as incoming(id, base_url, chat_model, embedding_model, encrypted_key)
+            on saved.id = incoming.id
+            when matched then update set base_url = incoming.base_url, chat_model = incoming.chat_model,
+                embedding_model = incoming.embedding_model, encrypted_key = incoming.encrypted_key
+            when not matched then insert (id, base_url, chat_model, embedding_model, encrypted_key)
+                values (incoming.id, incoming.base_url, incoming.chat_model, incoming.embedding_model, incoming.encrypted_key)
             """, config.base(), config.chat(), config.embedding(), encode(config));
     }
 

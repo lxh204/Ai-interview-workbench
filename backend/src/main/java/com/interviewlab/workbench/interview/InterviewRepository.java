@@ -6,11 +6,16 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 class InterviewRepository {
+    private static final String NONBLANK_ANSWER = "[^" + IntStream.rangeClosed(0, Character.MAX_CODE_POINT)
+        .filter(Character::isWhitespace)
+        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append) + "]";
+
     private final JdbcTemplate jdbc;
 
     InterviewRepository(JdbcTemplate jdbc) {
@@ -49,11 +54,11 @@ class InterviewRepository {
             WHERE s.role_code = ? AND s.topic_code = ? AND s.kind_code = ?
                 AND (CAST(? AS VARCHAR(36)) IS NULL OR s.resume_id = ?)
                 AND a.skipped = FALSE AND a.follow_up_of IS NULL
-                AND REGEXP_LIKE(a.answer_text, '[^\\p{javaWhitespace}]')
+                AND REGEXP_LIKE(a.answer_text, ?)
             GROUP BY a.question_text
             ORDER BY MAX(s.created_at) ASC NULLS FIRST, MIN(a.question_index), a.question_text
             """, (rows, index) -> rows.getString("question_text"),
-            settings.role(), settings.topic(), settings.kind(), settings.resumeId(), settings.resumeId());
+            settings.role(), settings.topic(), settings.kind(), settings.resumeId(), settings.resumeId(), NONBLANK_ANSWER);
     }
 
     List<InterviewResponse.Summary> list() {
@@ -122,8 +127,12 @@ class InterviewRepository {
 
     void setBookmark(String id, int index, boolean bookmarked) {
         if (bookmarked) {
-            jdbc.update("MERGE INTO interview_bookmark (session_id, question_index) KEY (session_id, question_index) VALUES (?, ?)",
-                id, index);
+            // The caller holds the parent session row lock for the current question.
+            jdbc.update("""
+                INSERT INTO interview_bookmark (session_id, question_index)
+                SELECT CAST(? AS VARCHAR(36)), CAST(? AS INTEGER)
+                WHERE NOT EXISTS (SELECT 1 FROM interview_bookmark WHERE session_id = ? AND question_index = ?)
+                """, id, index, id, index);
         } else {
             jdbc.update("DELETE FROM interview_bookmark WHERE session_id = ? AND question_index = ?", id, index);
         }

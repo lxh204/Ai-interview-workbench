@@ -15,7 +15,7 @@ ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP WI
 CREATE TABLE IF NOT EXISTS interview_question (
     session_id VARCHAR(36) NOT NULL REFERENCES interview_session(id) ON DELETE CASCADE,
     question_index INT NOT NULL,
-    question_plan CLOB NOT NULL,
+    question_plan text NOT NULL,
     PRIMARY KEY (session_id, question_index)
 );
 
@@ -23,8 +23,8 @@ CREATE TABLE IF NOT EXISTS interview_answer (
     session_id VARCHAR(36) NOT NULL REFERENCES interview_session(id) ON DELETE CASCADE,
     question_index INT NOT NULL,
     question_text VARCHAR(512) NOT NULL,
-    answer_text CLOB NOT NULL,
-    feedback_text CLOB NOT NULL,
+    answer_text text NOT NULL,
+    feedback_text text NOT NULL,
     score INT,
     PRIMARY KEY (session_id, question_index)
 );
@@ -32,9 +32,9 @@ CREATE TABLE IF NOT EXISTS interview_answer (
 ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS skipped_count INT DEFAULT 0 NOT NULL;
 ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_id VARCHAR(36);
 ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_name VARCHAR(255);
-ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_snapshot CLOB;
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_snapshot text;
 ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS provider_id VARCHAR(64);
-ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS draft_text CLOB;
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS draft_text text;
 ALTER TABLE interview_answer ADD COLUMN IF NOT EXISTS skipped BOOLEAN DEFAULT FALSE NOT NULL;
 ALTER TABLE interview_answer ADD COLUMN IF NOT EXISTS follow_up_of INT;
 

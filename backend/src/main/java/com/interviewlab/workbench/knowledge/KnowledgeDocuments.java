@@ -1,7 +1,5 @@
 package com.interviewlab.workbench.knowledge;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.interviewlab.workbench.ai.ModelGateway;
 import com.interviewlab.workbench.knowledge.PassageSearch.Passage;
 import com.interviewlab.workbench.resume.ResumeFiles;
@@ -33,7 +31,7 @@ import org.xml.sax.SAXException;
 class KnowledgeDocuments {
     private static final String DOCUMENTS = """
         select d.id, d.title, d.category, d.filename, d.created_at, count(c.chunk_index) as chunks,
-          count(c.embedding) as vectors, d.size_bytes, d.question_count, d.access_count
+          count(c.%s) as vectors, d.size_bytes, d.question_count, d.access_count
         from knowledge_document d join knowledge_chunk c on c.document_id = d.id
         """;
     private static final String GROUP_DOCUMENTS = """
@@ -42,24 +40,26 @@ class KnowledgeDocuments {
     private final JdbcTemplate jdbc;
     private final NamedParameterJdbcTemplate named;
     private final TransactionTemplate transaction;
-    private final ObjectMapper json;
+    private final KnowledgeVectorStore vectorStore;
+    private final String documentQuery;
     private final ModelGateway model;
 
     KnowledgeDocuments(JdbcTemplate jdbc, NamedParameterJdbcTemplate named, TransactionTemplate transaction,
-                       ObjectMapper json, ModelGateway model) {
+                       KnowledgeVectorStore vectorStore, ModelGateway model) {
         this.jdbc = jdbc;
         this.named = named;
         this.transaction = transaction;
-        this.json = json;
+        this.vectorStore = vectorStore;
+        this.documentQuery = DOCUMENTS.formatted(vectorStore.column());
         this.model = model;
     }
 
     List<Document> list() {
-        return jdbc.query(DOCUMENTS + GROUP_DOCUMENTS + " order by d.created_at desc, d.id", this::row);
+        return jdbc.query(documentQuery + GROUP_DOCUMENTS + " order by d.created_at desc, d.id", this::row);
     }
 
     Document get(String id) {
-        return jdbc.query(DOCUMENTS + " where d.id = ?" + GROUP_DOCUMENTS, this::row, id)
+        return jdbc.query(documentQuery + " where d.id = ?" + GROUP_DOCUMENTS, this::row, id)
             .stream().findFirst().orElseThrow(KnowledgeDocuments::missing);
     }
 
@@ -87,7 +87,6 @@ class KnowledgeDocuments {
         String documentText = text;
         String documentCategory = category;
         long size = original == null ? text.getBytes(StandardCharsets.UTF_8).length : original.length;
-        String encoding = vectors.isEmpty() ? null : model.embeddingSpace();
         transaction.executeWithoutResult(status -> {
             jdbc.update("""
                 insert into knowledge_document(id, title, category, filename, original_file, original_text, size_bytes)
@@ -95,9 +94,10 @@ class KnowledgeDocuments {
                 """, id, documentTitle, documentCategory, filename, original, documentText, size);
             for (int index = 0; index < chunks.size(); index++) {
                 jdbc.update("""
-                    insert into knowledge_chunk(document_id, chunk_index, content, embedding, embedding_space)
-                    values (?, ?, ?, ?, ?)
-                    """, id, index + 1, chunks.get(index), vectors.isEmpty() ? null : vectors.get(index), encoding);
+                    insert into knowledge_chunk(document_id, chunk_index, content, %s, embedding_space)
+                    values (?, ?, ?, %s, ?)
+                    """.formatted(vectorStore.column(), vectorStore.bindValue()),
+                    id, index + 1, chunks.get(index), vectors.at(index), vectors.space());
             }
         });
         return get(id);
@@ -152,14 +152,15 @@ class KnowledgeDocuments {
         get(id);
         List<Passage> chunks = passages(List.of(id), "");
         var vectors = embed(chunks.stream().map(Passage::text).toList());
-        if (vectors.isEmpty()) {
+        if (vectors.values().isEmpty()) {
             return get(id);
         }
-        String encoding = model.embeddingSpace();
         transaction.executeWithoutResult(status -> {
             for (int i = 0; i < chunks.size(); i++) {
-                jdbc.update("update knowledge_chunk set embedding = ?, embedding_space = ? where document_id = ? and chunk_index = ?",
-                    vectors.get(i), encoding, id, chunks.get(i).chunkIndex());
+                jdbc.update("""
+                    update knowledge_chunk set %s = %s, embedding_space = ? where document_id = ? and chunk_index = ?
+                    """.formatted(vectorStore.column(), vectorStore.bindValue()),
+                    vectors.at(i), vectors.space(), id, chunks.get(i).chunkIndex());
             }
         });
         return get(id);
@@ -205,31 +206,33 @@ class KnowledgeDocuments {
 
     List<Passage> passages(List<String> scope, String encoding) {
         String filter = scope.isEmpty() ? "" : " where d.id in (:scope)";
+        String stored = vectorStore.usesPgvector() || encoding.isEmpty() ? "null" : "c.embedding";
         return named.query("""
-            select d.id, d.title, c.chunk_index, c.content, c.embedding, c.embedding_space
+            select d.id, d.title, c.chunk_index, c.content, %s as stored_embedding, c.embedding_space
             from knowledge_chunk c join knowledge_document d on c.document_id = d.id
-            """ + filter + " order by d.id, c.chunk_index", Map.of("scope", scope), (rs, row) -> new Passage(
-                rs.getString("id"), rs.getString("title"), rs.getInt("chunk_index"), rs.getString("content"),
-                encoding.equals(rs.getString("embedding_space")) ? decode(rs.getString("embedding")) : null));
+            """.formatted(stored) + filter + " order by d.id, c.chunk_index", Map.of("scope", scope), (rs, row) -> {
+                String vector = rs.getString("stored_embedding");
+                return new Passage(rs.getString("id"), rs.getString("title"), rs.getInt("chunk_index"),
+                    rs.getString("content"), vector != null && encoding.equals(rs.getString("embedding_space"))
+                        ? vectorStore.decodeLegacy(vector) : null);
+            });
     }
 
-    private List<String> embed(List<String> chunks) {
-        return model.embeddingsEnabled() ? model.embed(chunks).stream().map(this::encode).toList() : List.of();
-    }
-
-    private String encode(double[] vector) {
-        try {
-            return json.writeValueAsString(vector);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cannot store document vector", ex);
+    private EmbeddingBatch embed(List<String> chunks) {
+        if (!model.embeddingsEnabled()) {
+            return new EmbeddingBatch(null, List.of());
         }
+        String encoding = model.embeddingSpace();
+        List<String> encoded = model.embed(chunks).stream().map(vectorStore::encode).toList();
+        if (!encoding.equals(model.embeddingSpace())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "嵌入模型配置已变更，请重试索引。");
+        }
+        return new EmbeddingBatch(encoding, encoded);
     }
 
-    private double[] decode(String vector) {
-        try {
-            return json.readValue(vector, double[].class);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Cannot read document vector", ex);
+    private record EmbeddingBatch(String space, List<String> values) {
+        String at(int index) {
+            return values.isEmpty() ? null : values.get(index);
         }
     }
 

@@ -6,7 +6,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.ToDoubleFunction;
 import java.util.regex.Pattern;
 
 final class PassageSearch {
@@ -43,6 +45,15 @@ final class PassageSearch {
     }
 
     static List<Passage> find(String question, List<Passage> passages, double[] queryVector) {
+        return rank(question, passages, passage -> cosine(queryVector, passage.vector()));
+    }
+
+    static List<Passage> findWithVectorScores(String question, List<Passage> passages, Map<PassageKey, Double> vectorScores) {
+        return rank(question, passages, passage ->
+            vectorScores.getOrDefault(new PassageKey(passage.documentId(), passage.chunkIndex()), 0.0));
+    }
+
+    private static List<Passage> rank(String question, List<Passage> passages, ToDoubleFunction<Passage> relevance) {
         Set<String> queryTerms = terms(question);
         List<Set<String>> passageTerms = passages.stream().map(p -> terms(p.text())).toList();
         var weights = new HashMap<String, Double>();
@@ -59,7 +70,7 @@ final class PassageSearch {
             Set<String> candidates = passageTerms.get(i);
             double lexical = total == 0 ? 0 : weights.entrySet().stream()
                 .filter(entry -> candidates.contains(entry.getKey())).mapToDouble(entry -> entry.getValue()).sum() / total;
-            double semantic = cosine(queryVector, passage.vector());
+            double semantic = relevance.applyAsDouble(passage);
             if (lexical > 0 || semantic >= 0.48) {
                 scored.add(new Ranked(passage, lexical + 0.65 * Math.max(0, semantic)));
             }
@@ -100,5 +111,6 @@ final class PassageSearch {
     }
 
     record Passage(String documentId, String title, int chunkIndex, String text, double[] vector) {}
+    record PassageKey(String documentId, int chunkIndex) {}
     private record Ranked(Passage passage, double score) {}
 }

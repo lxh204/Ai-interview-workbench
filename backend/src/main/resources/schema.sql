@@ -8,7 +8,7 @@ create table if not exists knowledge_chunk (
     document_id varchar(36) not null references knowledge_document(id) on delete cascade,
     chunk_index integer not null,
     content varchar(1200) not null,
-    embedding clob,
+    embedding text,
     embedding_space varchar(400),
     primary key (document_id, chunk_index)
 );
@@ -35,11 +35,11 @@ create table if not exists resume_review (
     id varchar(36) primary key,
     filename varchar(180) not null,
     role_label varchar(100) not null,
-    body clob not null,
-    original_file blob,
+    body text not null,
+    original_file bytea,
     fingerprint varchar(64) not null,
     task_state varchar(12) not null,
-    feedback clob,
+    feedback text,
     fail_reason varchar(250),
     created_at timestamp with time zone not null default current_timestamp,
     unique (fingerprint, role_label)
@@ -47,6 +47,9 @@ create table if not exists resume_review (
 create index if not exists resume_review_queue on resume_review(task_state, created_at);
 alter table resume_review add column if not exists automatic_retry_count int not null default 0;
 alter table resume_review add column if not exists next_attempt_at timestamp with time zone;
+alter table resume_review add column if not exists queue_version bigint not null default 0;
+alter table resume_review add column if not exists queue_published_at timestamp with time zone;
+alter table resume_review add column if not exists queue_lease_until timestamp with time zone;
 
 create table if not exists model_provider (
     id varchar(36) primary key,
