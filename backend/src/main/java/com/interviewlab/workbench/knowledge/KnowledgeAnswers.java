@@ -2,6 +2,7 @@ package com.interviewlab.workbench.knowledge;
 
 import com.interviewlab.workbench.ai.ModelGateway;
 import com.interviewlab.workbench.knowledge.PassageSearch.Passage;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
@@ -9,7 +10,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 class KnowledgeAnswers {
-    private static final Pattern CITATION = Pattern.compile("\\[(\\d{1,6})\\]");
+    private static final Pattern CITATION = Pattern.compile("\\[(?:S)?(\\d{1,6})\\]");
     private static final Pattern FOLLOW_UP = Pattern.compile("^(那|它|这|还有|如果|为什么[？?！!。\\s]*$|然后|继续|再|上面)");
     private static final String INSTRUCTION = """
         根据检索证据用中文回答当前问题。对话历史只用来理解追问，结论必须由本次证据支持。
@@ -76,5 +77,5 @@ class KnowledgeAnswers {
 
     record Source(String documentId, String title, int chunkIndex, String text) {}
     record Result(String mode, String answer, List<Source> sources) {}
-    record Turn(String question, String mode, String answer, List<Source> sources) {}
+    record Turn(String question, String mode, String answer, List<Source> sources, OffsetDateTime createdAt) {}
 }

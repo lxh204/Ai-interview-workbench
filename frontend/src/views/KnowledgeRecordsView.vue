@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, errorMessage, json } from '../api'
-import { bankLink, entityPath, knowledgeDate, knowledgeParameter, knowledgePractices, practiceLink, type Practice, type PracticeSummary } from './knowledge'
+import {
+  bankLink, entityPath, knowledgeDate, knowledgeParameter, knowledgePractices, knowledgeRecordsLink, practiceLink,
+  type Practice, type PracticeSummary,
+} from './knowledge'
 
 const rows = ref<PracticeSummary[]>([])
 const practice = ref<Practice>()
@@ -11,10 +14,12 @@ const error = ref('')
 const filter = ref('')
 const search = ref('')
 const draft = ref('')
+const documentScope = ref('')
 let loadingVersion = 0
 
 const currentQuestion = computed(() => practice.value?.questions[practice.value.index])
-const visible = computed(() => rows.value.filter(row =>
+const scopedRows = computed(() => rows.value.filter(row => !documentScope.value || row.documentId === documentScope.value))
+const visible = computed(() => scopedRows.value.filter(row =>
   row.documentTitle.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()) &&
   (!filter.value || row.completed === (filter.value === 'complete')),
 ))
@@ -24,6 +29,7 @@ async function load() {
   loading.value = true
   error.value = ''
   const id = knowledgeParameter('practice')
+  documentScope.value = knowledgeParameter('document') || knowledgeParameter('knowledgeBaseId')
   try {
     if (id) {
       const record = await api<Practice>(entityPath(knowledgePractices, id))
@@ -77,7 +83,7 @@ async function submitAnswer() {
     <header class="knowledge-header page-header">
       <div><h1>知识库面试记录</h1><p>{{ practice ? practice.documentTitle : '继续未完成的资料面试，回看作答、参考答案与反馈。' }}</p></div>
       <div class="knowledge-actions">
-        <a v-if="practice" class="button secondary" href="#/knowledgebase-interview/records">返回练习记录</a>
+        <a v-if="practice" class="button secondary" :href="knowledgeRecordsLink(documentScope)">返回练习记录</a>
         <a class="button secondary" :href="practice ? bankLink(practice.documentId) : '#/knowledgebase-interview'">打开知识库题库</a>
       </div>
     </header>
@@ -91,7 +97,7 @@ async function submitAnswer() {
         </header>
         <progress :value="practice.index" :max="practice.total" aria-label="练习进度" />
         <form v-if="currentQuestion" class="knowledge-form" @submit.prevent="submitAnswer">
-          <small class="muted">第 {{ practice.index + 1 }} 题 · {{ currentQuestion.category }} · {{ currentQuestion.difficulty }}</small>
+          <small class="muted">第 {{ practice.index + 1 }} 题 · {{ currentQuestion.followUpIndex ? '追问 ' + currentQuestion.followUpIndex : '主问题' }} · {{ currentQuestion.category }} · {{ currentQuestion.difficulty }}</small>
           <h3 class="knowledge-prewrap">{{ currentQuestion.question }}</h3>
           <label class="field">你的回答
             <textarea v-model="draft" rows="6" maxlength="5000" required :disabled="busy" placeholder="写下你的思路、应用条件或验证方法。"></textarea>
@@ -104,7 +110,7 @@ async function submitAnswer() {
       <section v-if="practice.answers.length" class="knowledge-panel knowledge-form knowledge-record-detail" aria-label="作答回顾">
         <h2>作答回顾</h2>
         <details v-for="answer in practice.answers" :key="answer.index" class="knowledge-source" :open="answer.index === practice.index - 1">
-          <summary>第 {{ answer.index + 1 }} 题　{{ practice.questions[answer.index]?.question }}</summary>
+          <summary>第 {{ answer.index + 1 }} 题<span v-if="practice.questions[answer.index]?.followUpIndex">（追问）</span>　{{ practice.questions[answer.index]?.question }}</summary>
           <div class="knowledge-review">
             <section><h3>你的回答</h3><p>{{ answer.content }}</p></section>
             <section><h3>参考答案</h3><p>{{ practice.questions[answer.index]?.referenceAnswer }}</p></section>
@@ -117,6 +123,10 @@ async function submitAnswer() {
       </section>
     </template>
     <section v-else-if="!loading && !knowledgeParameter('practice')" class="knowledge-panel" aria-label="资料练习记录">
+      <div v-if="documentScope" class="knowledge-bank-heading">
+        <p>{{ scopedRows[0]?.documentTitle || '当前资料' }}的练习记录</p>
+        <a class="button small secondary" :href="knowledgeRecordsLink()">查看全部资料记录</a>
+      </div>
       <div class="knowledge-toolbar">
         <label class="knowledge-search"><span class="sr-only">搜索资料练习记录</span><input v-model="search" type="search" placeholder="搜索资料名称…"></label>
         <select v-model="filter" aria-label="筛选练习状态">
@@ -126,9 +136,9 @@ async function submitAnswer() {
       </div>
       <div v-if="!visible.length" class="knowledge-empty">
         <span class="knowledge-empty-icon glyph glyph-knowledge" aria-hidden="true"></span>
-        <h2>{{ rows.length ? '没有匹配的练习记录' : '还没有资料练习' }}</h2>
-        <p>{{ rows.length ? '调整搜索词或练习状态。' : '在题库启用题目后，开始一次资料练习。' }}</p>
-        <a v-if="!rows.length" class="button primary" href="#/knowledgebase-interview">前往题库</a>
+        <h2>{{ scopedRows.length ? '没有匹配的练习记录' : '还没有资料练习' }}</h2>
+        <p>{{ scopedRows.length ? '调整搜索词或练习状态。' : '在题库启用题目后，开始一次资料练习。' }}</p>
+        <a v-if="!scopedRows.length" class="button primary" :href="documentScope ? bankLink(documentScope) : '#/knowledgebase-interview'">前往题库</a>
       </div>
       <div v-else class="knowledge-table-wrap">
         <table class="knowledge-table">
@@ -138,7 +148,7 @@ async function submitAnswer() {
               <td><strong>{{ row.documentTitle }}</strong></td><td>{{ row.index }} / {{ row.total }} 道</td>
               <td><span class="knowledge-badge" :class="{ success: row.completed }">{{ row.completed ? '已完成' : '进行中' }}</span></td>
               <td class="knowledge-date">{{ knowledgeDate(row.updatedAt) }}</td>
-              <td><a class="button small secondary" :href="practiceLink(row.id)">{{ row.completed ? '查看练习' : '继续练习' }}</a></td>
+              <td><a class="button small secondary" :href="practiceLink(row.id, documentScope)">{{ row.completed ? '查看练习' : '继续练习' }}</a></td>
             </tr>
           </tbody>
         </table>

@@ -1,11 +1,11 @@
 import { onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ApiError, api, errorMessage, json, type Interview } from '../api'
+import { ApiError, api, errorMessage, json, type Interview, type InterviewAnswer } from '../api'
 
 export type InterviewKind = 'text' | 'voice'
 export type InterviewRole = 'java' | 'ai' | 'frontend' | 'python' | 'qa'
 export type Difficulty = 'junior' | 'mid' | 'senior'
-export type Topic = 'general' | 'spring' | 'storage' | 'rag' | 'model' | 'algorithm' | 'frontend' | 'python' | 'system' | 'testing' | 'jd'
-export type InterviewConfig = { role: InterviewRole; topic: Topic; difficulty: Difficulty; questionCount: number; kind: InterviewKind; jdText?: string }
+export type Topic = 'general' | 'spring' | 'storage' | 'rag' | 'model' | 'algorithm' | 'frontend' | 'python' | 'system' | 'testing' | 'agent' | 'ali' | 'byte' | 'tencent' | 'jd'
+export type InterviewConfig = { role: InterviewRole; topic: Topic; difficulty: Difficulty; questionCount: number; kind: InterviewKind; jdText?: string; resumeId?: string; providerId?: string; followUps?: boolean }
 export type InterviewSummary = Omit<Interview, 'question' | 'answers' | 'role'> & {
   role: InterviewRole
   topic: Topic
@@ -14,8 +14,14 @@ export type InterviewSummary = Omit<Interview, 'question' | 'answers' | 'role'> 
   paused: boolean
   createdAt: string | null
   completedAt: string | null
+  skippedCount: number
+  resumeId: string | null
+  resumeName: string | null
+  providerId: string | null
 }
-export type InterviewDetail = Pick<Interview, 'question' | 'answers'> & InterviewSummary
+export type SavedInterviewAnswer = InterviewAnswer & { skipped?: boolean; bookmarked?: boolean; followUpOf?: number | null }
+export type InterviewDetail = InterviewSummary & { question: string | null; answers: SavedInterviewAnswer[];
+  followUpOf: number | null; bookmarked: boolean; draft: string | null }
 
 export const difficulties: Record<Difficulty, string> = {
   junior: '校招 · 基础题',
@@ -23,21 +29,25 @@ export const difficulties: Record<Difficulty, string> = {
   senior: '高级 · 稳定性与恢复',
 }
 export const topicOptions: Record<Topic, { label: string; description: string }> = {
-  general: { label: '综合面试', description: '覆盖该岗位的主要技术场景。' },
+  general: { label: 'Java 后端开发', description: '围绕 Java 核心、Spring、数据库、缓存和故障排查。' },
   spring: { label: 'Spring 实战', description: '围绕事务、接口与配置排查。' },
   storage: { label: '数据库与缓存', description: '围绕并发更新、分页与缓存一致性。' },
   rag: { label: '知识库与 RAG', description: '围绕文档处理、检索与引用评估。' },
   model: { label: '模型应用工程', description: '围绕接口调用、输出校验与成本。' },
   algorithm: { label: '数据结构与算法', description: '围绕算法选择、边界条件和复杂度。' },
   frontend: { label: '前端工程', description: '围绕 Vue 状态、性能和可访问性。' },
-  python: { label: 'Python 后端', description: '围绕异步接口、数据校验与异常处理。' },
+  python: { label: 'Python 后端开发', description: '围绕异步接口、数据校验与异常处理。' },
   system: { label: '系统设计', description: '围绕容量、一致性、监控和发布。' },
   testing: { label: '测试开发', description: '围绕接口契约、并发和端到端测试。' },
+  agent: { label: 'AI Agent 开发', description: '围绕工具调用、MCP、任务规划和故障恢复。' },
+  ali: { label: '阿里后端', description: '练习交易链路、分片数据和中间件选型。' },
+  byte: { label: '字节后端', description: '练习算法应用、高并发处理和性能分析。' },
+  tencent: { label: '腾讯后端', description: '练习网络通信、系统基础和线上调试。' },
   jd: { label: 'JD 定制面试', description: '粘贴岗位描述，练习技能匹配和项目举证。' },
 }
 export const roleTopics: Record<InterviewRole, Topic[]> = {
-  java: ['general', 'spring', 'storage', 'algorithm', 'system', 'testing', 'jd'],
-  ai: ['general', 'rag', 'model', 'algorithm', 'system', 'testing', 'jd'],
+  java: ['general', 'spring', 'storage', 'algorithm', 'system', 'testing', 'ali', 'byte', 'tencent', 'jd'],
+  ai: ['general', 'agent', 'rag', 'model', 'algorithm', 'system', 'testing', 'jd'],
   frontend: ['general', 'frontend', 'algorithm', 'testing', 'system', 'jd'],
   python: ['general', 'python', 'storage', 'algorithm', 'system', 'testing', 'jd'],
   qa: ['general', 'testing', 'storage', 'system', 'algorithm', 'jd'],
@@ -48,6 +58,10 @@ export const interviewRoles: Record<InterviewRole, string> = {
   frontend: '前端开发',
   python: 'Python 后端开发',
   qa: '测试开发',
+}
+
+export function interviewTitle(role: InterviewRole, topic: Topic) {
+  return topic === 'general' ? interviewRoles[role] : topicOptions[topic].label
 }
 
 export function sessionLink(id: string, kind: InterviewKind) {
@@ -98,7 +112,7 @@ export function useInterviewSession(currentId: () => string) {
     try {
       const next = await api<InterviewDetail>('/interviews/' + encodeURIComponent(id))
       if (version === requestVersion) {
-        if (session.value?.id !== next.id || session.value?.index !== next.index || next.completed) answer.value = ''
+        if (session.value?.id !== next.id || session.value?.index !== next.index || next.completed) answer.value = next.draft ?? ''
         session.value = next
         error.value = message
       }
@@ -136,7 +150,7 @@ export function useInterviewSession(currentId: () => string) {
     }
   }
 
-  async function command(route: 'answers' | 'state', body: Record<string, string>) {
+  async function command(route: 'answers' | 'state' | 'bookmark', body: Record<string, string | boolean>) {
     const active = session.value
     if (!active || active.completed || pending.value) return
     const version = ++requestVersion
@@ -147,8 +161,9 @@ export function useInterviewSession(currentId: () => string) {
         json({ index: active.index, ...body }))
       if (version !== requestVersion) return
       session.value = next
-      if (route === 'answers' || next.completed) answer.value = ''
+      if (next.index !== active.index || next.completed) answer.value = next.draft ?? ''
       if (next.completed) window.location.hash = reportLink(next.id)
+      return true
     } catch (failure) {
       if (version !== requestVersion) return
       if (failure instanceof ApiError && failure.status === 409) {
@@ -166,9 +181,13 @@ export function useInterviewSession(currentId: () => string) {
     if (text && !session.value?.paused) return command('answers', { answer: text })
   }
 
-  function setState(action: 'pause' | 'resume' | 'finish') {
+  function setState(action: 'pause' | 'resume' | 'finish' | 'skip') {
     return command('state', { action })
   }
 
-  return { session, answer, error, pending, restore, start, submit, setState }
+  function bookmark(bookmarked: boolean) {
+    return command('bookmark', { bookmarked })
+  }
+
+  return { session, answer, error, pending, restore, start, submit, setState, bookmark }
 }

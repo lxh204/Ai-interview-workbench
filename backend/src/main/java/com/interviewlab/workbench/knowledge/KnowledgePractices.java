@@ -5,9 +5,12 @@ import com.interviewlab.workbench.ai.ModelGateway;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -42,15 +45,39 @@ class KnowledgePractices {
         return jdbc.query(SELECT + " order by updated_at desc, id", this::read);
     }
 
-    Practice start(String documentId, List<String> ids) {
-        var requested = new LinkedHashSet<>(ids);
-        if (requested.size() != ids.size()) {
-            throw KnowledgeDocuments.bad("练习题目不能重复。");
-        }
+    Practice start(String documentId, List<String> ids, Integer requestedCount, int followUpCount, String category, String difficulty) {
         var document = documents.get(documentId);
-        var questions = requested.stream().map(id -> bank.get(documentId, id)).toList();
-        if (questions.stream().anyMatch(question -> !"ACTIVE".equals(question.status()))) {
-            throw KnowledgeDocuments.bad("资料练习仅可使用已启用的题目。");
+        boolean explicit = ids != null && !ids.isEmpty();
+        List<KnowledgeBank.Item> candidates;
+        if (explicit) {
+            var requested = new LinkedHashSet<>(ids);
+            if (requested.size() != ids.size()) {
+                throw KnowledgeDocuments.bad("练习题目不能重复。");
+            }
+            candidates = requested.stream().map(id -> bank.get(documentId, id)).toList();
+            if (candidates.stream().anyMatch(question -> !"ACTIVE".equals(question.status()))) {
+                throw KnowledgeDocuments.bad("资料练习仅可使用已启用的题目。");
+            }
+        } else {
+            candidates = bank.list(documentId);
+        }
+        int count = requestedCount == null ? (explicit ? ids.size() : 0) : requestedCount;
+        if (count < 1 || count > 20) {
+            throw KnowledgeDocuments.bad("请选择 1 至 20 道主问题。");
+        }
+        var eligible = new ArrayList<>(candidates.stream().filter(question -> "ACTIVE".equals(question.status())
+                && (category.isBlank() || category.equals(question.category()))
+                && (difficulty.isBlank() || difficulty.equals(question.difficulty()))
+                && question.followUps().size() >= followUpCount).toList());
+        if (eligible.size() < count) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "当前只有 " + eligible.size() + " 道题符合方向、难度和追问数量，请调整配置。");
+        }
+        if (!explicit) Collections.shuffle(eligible);
+        var questions = new ArrayList<KnowledgeBank.Item>(count * (followUpCount + 1));
+        for (var question : eligible.subList(0, count)) {
+            questions.add(question);
+            questions.addAll(IntStream.range(0, followUpCount).mapToObj(question::followUp).toList());
         }
         String id = UUID.randomUUID().toString();
         jdbc.update("""

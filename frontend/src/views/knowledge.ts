@@ -6,6 +6,9 @@ export interface Document extends KnowledgeDocument {
   filename: string | null
   vectorized: boolean
   createdAt: string
+  sizeBytes: number | null
+  questionCount: number
+  accessCount: number
 }
 
 export interface ConversationSummary {
@@ -19,6 +22,7 @@ export interface ConversationSummary {
 
 export interface Turn extends KnowledgeResult {
   question: string
+  createdAt: string | null
 }
 
 export type Conversation = Omit<ConversationSummary, 'turnCount'> & { turns: Turn[] }
@@ -28,12 +32,18 @@ export const difficulties: Difficulty[] = ['基础', '进阶', '深入']
 export type QuestionStatus = 'DRAFT' | 'ACTIVE' | 'ARCHIVED'
 export const statuses: Record<QuestionStatus, string> = { DRAFT: '草稿', ACTIVE: '已启用', ARCHIVED: '已归档' }
 
+export interface FollowUp {
+  question: string
+  referenceAnswer: string
+}
+
 export interface QuestionForm {
   question: string
   referenceAnswer: string
   category: string
   difficulty: Difficulty
   status: QuestionStatus
+  followUps: FollowUp[]
 }
 
 export interface Question extends QuestionForm {
@@ -42,6 +52,7 @@ export interface Question extends QuestionForm {
   sourceIndex: number | null
   sourceText: string | null
   createdAt: string
+  followUpIndex: number | null
 }
 
 export interface PracticeSummary {
@@ -67,7 +78,10 @@ export const entityPath = (base: string, id: string) => base + '/' + encodeURICo
 export const bankPath = (id: string) => entityPath(knowledgeDocuments, id) + '/questions'
 export const chatLink = (id: string) => '#/knowledgebase/chat?document=' + encodeURIComponent(id)
 export const bankLink = (id: string) => '#/knowledgebase-interview?document=' + encodeURIComponent(id)
-export const practiceLink = (id: string) => '#/knowledgebase-interview/records?practice=' + encodeURIComponent(id)
+export const knowledgeRecordsLink = (documentId?: string) => '#/knowledgebase-interview/records' +
+  (documentId ? '?document=' + encodeURIComponent(documentId) : '')
+export const practiceLink = (id: string, documentId?: string) => '#/knowledgebase-interview/records?practice=' + encodeURIComponent(id) +
+  (documentId ? '&document=' + encodeURIComponent(documentId) : '')
 
 export function knowledgeParameter(key: string): string {
   const index = location.hash.indexOf('?')
@@ -76,6 +90,13 @@ export function knowledgeParameter(key: string): string {
 
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
 export const knowledgeDate = (date: string) => dateFormat.format(new Date(date))
+
+export function fileSize(bytes: number | null): string {
+  if (bytes === null) return '—'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
 
 export function withMethod(method: 'PATCH' | 'PUT', body: unknown): RequestInit {
   return { ...json(body), method }

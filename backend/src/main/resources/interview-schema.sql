@@ -28,3 +28,18 @@ CREATE TABLE IF NOT EXISTS interview_answer (
     score INT,
     PRIMARY KEY (session_id, question_index)
 );
+
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS skipped_count INT DEFAULT 0 NOT NULL;
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_id VARCHAR(36);
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_name VARCHAR(255);
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS resume_snapshot CLOB;
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS provider_id VARCHAR(64);
+ALTER TABLE interview_session ADD COLUMN IF NOT EXISTS draft_text CLOB;
+ALTER TABLE interview_answer ADD COLUMN IF NOT EXISTS skipped BOOLEAN DEFAULT FALSE NOT NULL;
+ALTER TABLE interview_answer ADD COLUMN IF NOT EXISTS follow_up_of INT;
+
+CREATE TABLE IF NOT EXISTS interview_bookmark (
+    session_id VARCHAR(36) NOT NULL REFERENCES interview_session(id) ON DELETE CASCADE,
+    question_index INT NOT NULL,
+    PRIMARY KEY (session_id, question_index)
+);

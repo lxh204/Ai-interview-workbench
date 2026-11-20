@@ -56,3 +56,8 @@ create table if not exists model_provider (
     active_flag boolean not null default false,
     created_at timestamp with time zone not null default current_timestamp
 );
+
+alter table scheduled_interview add column if not exists meeting_url varchar(500) not null default '';
+alter table scheduled_interview add column if not exists interviewer varchar(100) not null default '';
+alter table scheduled_interview add column if not exists round_number integer;
+alter table scheduled_interview add column if not exists reminder_minutes integer not null default 0;

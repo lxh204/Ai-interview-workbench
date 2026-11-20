@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,9 @@ public class ModelGateway {
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
     private final ObjectMapper json;
     private volatile Configuration configuration;
+    private volatile Function<String, Configuration> providerLookup = id -> {
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "模型配置不存在。");
+    };
 
     public ModelGateway(ObjectMapper json,
                         @Value("${workbench.model.api-key}") String key,
@@ -40,6 +44,23 @@ public class ModelGateway {
 
     void apply(Configuration next) {
         configuration = next;
+    }
+
+    void setProviderLookup(Function<String, Configuration> lookup) {
+        providerLookup = lookup;
+    }
+
+    public void requireProvider(String providerId) {
+        resolveProvider(providerId);
+    }
+
+    private Configuration resolveProvider(String providerId) {
+        if (providerId == null || providerId.isBlank()) return configuration;
+        var settings = providerLookup.apply(providerId.strip());
+        if (!settings.enabled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "所选模型的凭据不可用，请在设置中更新。");
+        }
+        return settings;
     }
 
     public boolean enabled() {
@@ -61,7 +82,11 @@ public class ModelGateway {
     }
 
     public String complete(String instruction, String data) {
-        var settings = configuration;
+        return completeForProvider(null, instruction, data);
+    }
+
+    public String completeForProvider(String providerId, String instruction, String data) {
+        var settings = resolveProvider(providerId);
         var request = Map.of("model", settings.chat(), "messages", messages(instruction, data));
         String content = post(settings, "/chat/completions", request)
             .path("choices").path(0).path("message").path("content").asText("").strip();

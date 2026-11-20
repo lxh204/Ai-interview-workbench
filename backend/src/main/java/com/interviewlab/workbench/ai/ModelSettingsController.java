@@ -64,6 +64,7 @@ public class ModelSettingsController {
         if (!entries.isEmpty()) {
             gateway.apply(entries.getFirst());
         }
+        gateway.setProviderLookup(id -> provider(id).configuration());
     }
 
     @GetMapping("/model")

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.interviewlab.workbench.ai.ModelGateway;
 import com.interviewlab.workbench.knowledge.PassageSearch.Passage;
+import com.interviewlab.workbench.resume.ResumeFiles;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import javax.xml.parsers.ParserConfigurationException;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.http.HttpStatus;
@@ -25,15 +27,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import org.xml.sax.SAXException;
 
 @Service
 class KnowledgeDocuments {
     private static final String DOCUMENTS = """
         select d.id, d.title, d.category, d.filename, d.created_at, count(c.chunk_index) as chunks,
-          count(c.embedding) as vectors
+          count(c.embedding) as vectors, d.size_bytes, d.question_count, d.access_count
         from knowledge_document d join knowledge_chunk c on c.document_id = d.id
         """;
-    private static final String GROUP_DOCUMENTS = " group by d.id, d.title, d.category, d.filename, d.created_at";
+    private static final String GROUP_DOCUMENTS = """
+         group by d.id, d.title, d.category, d.filename, d.created_at, d.size_bytes, d.question_count, d.access_count
+        """;
     private final JdbcTemplate jdbc;
     private final NamedParameterJdbcTemplate named;
     private final TransactionTemplate transaction;
@@ -61,7 +66,8 @@ class KnowledgeDocuments {
     private Document row(ResultSet result, int row) throws SQLException {
         return new Document(result.getString("id"), result.getString("title"), result.getInt("chunks"),
             result.getString("category"), result.getString("filename"), result.getInt("vectors") > 0,
-            result.getObject("created_at", OffsetDateTime.class));
+            result.getObject("created_at", OffsetDateTime.class), result.getObject("size_bytes", Long.class),
+            result.getLong("question_count"), result.getLong("access_count"));
     }
 
     Document add(String title, String text, String category, String filename, byte[] original) {
@@ -80,12 +86,13 @@ class KnowledgeDocuments {
         String documentTitle = title;
         String documentText = text;
         String documentCategory = category;
+        long size = original == null ? text.getBytes(StandardCharsets.UTF_8).length : original.length;
         String encoding = vectors.isEmpty() ? null : model.embeddingSpace();
         transaction.executeWithoutResult(status -> {
             jdbc.update("""
-                insert into knowledge_document(id, title, category, filename, original_file, original_text)
-                values (?, ?, ?, ?, ?, ?)
-                """, id, documentTitle, documentCategory, filename, original, documentText);
+                insert into knowledge_document(id, title, category, filename, original_file, original_text, size_bytes)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """, id, documentTitle, documentCategory, filename, original, documentText, size);
             for (int index = 0; index < chunks.size(); index++) {
                 jdbc.update("""
                     insert into knowledge_chunk(document_id, chunk_index, content, embedding, embedding_space)
@@ -112,15 +119,16 @@ class KnowledgeDocuments {
             byte[] bytes = file.getBytes();
             String text = switch (suffix) {
                 case ".pdf" -> readPdf(bytes);
+                case ".docx" -> ResumeFiles.readDocx(bytes);
                 case ".txt", ".md" -> StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes)).toString().replaceFirst("^\\uFEFF", "");
-                default -> throw bad("支持 PDF、UTF-8 TXT 和 Markdown 文件。");
+                default -> throw bad("支持 PDF、DOCX、UTF-8 TXT 和 Markdown 文件。");
             };
             return add(title.isBlank() ? fallbackTitle : title, text, category, filename, bytes);
         } catch (CharacterCodingException ex) {
             throw bad("文本文件需要使用 UTF-8 编码。");
-        } catch (IOException ex) {
-            throw bad("无法提取文件正文，请上传可复制文字的 PDF 或 UTF-8 文本。");
+        } catch (IOException | SAXException | ParserConfigurationException ex) {
+            throw bad("无法提取文件正文，请检查 PDF、DOCX 或 UTF-8 文本格式。");
         }
     }
 
@@ -170,10 +178,23 @@ class KnowledgeDocuments {
                 return new Download(title + ".txt", text == null ? null : text.getBytes(StandardCharsets.UTF_8));
             }, id).stream().findFirst().orElseThrow(KnowledgeDocuments::missing);
         if (file.content() != null) {
+            countAccess(id);
             return file;
         }
         String content = String.join("\n\n", passages(List.of(id), "").stream().map(Passage::text).toList());
+        countAccess(id);
         return new Download(file.name(), content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    void countAccess(String id) {
+        jdbc.update("update knowledge_document set access_count = access_count + 1 where id = ?", id);
+    }
+
+    void countQuestions(List<String> scope) {
+        if (!scope.isEmpty()) {
+            named.update("update knowledge_document set question_count = question_count + 1 where id in (:scope)",
+                Map.of("scope", scope));
+        }
     }
 
     void remove(String id) {
@@ -225,6 +246,6 @@ class KnowledgeDocuments {
     }
 
     record Document(String id, String title, int chunkCount, String category, String filename, boolean vectorized,
-                    OffsetDateTime createdAt) {}
+                    OffsetDateTime createdAt, Long sizeBytes, long questionCount, long accessCount) {}
     record Download(String name, byte[] content) {}
 }

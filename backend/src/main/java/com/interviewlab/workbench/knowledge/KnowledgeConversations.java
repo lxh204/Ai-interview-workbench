@@ -58,10 +58,10 @@ class KnowledgeConversations {
     Conversation get(String id) {
         var summary = summary(id);
         List<Turn> turns = jdbc.query("""
-            select question, mode, answer, sources from knowledge_turn
+            select question, mode, answer, sources, created_at from knowledge_turn
             where conversation_id = ? order by turn_index
             """, (rs, row) -> new Turn(rs.getString("question"), rs.getString("mode"), rs.getString("answer"),
-                json.read(rs.getString("sources"), SOURCES)), id);
+                json.read(rs.getString("sources"), SOURCES), rs.getObject("created_at", OffsetDateTime.class)), id);
         return new Conversation(summary.id(), summary.title(), summary.documentIds(), summary.pinned(),
             summary.updatedAt(), turns);
     }
@@ -115,7 +115,7 @@ class KnowledgeConversations {
         }
         List<String> scope = validScope(conversation.documentIds());
         Result result = answers.ask(question, scope, conversation.turns(), onDelta);
-        var turn = new Turn(question, result.mode(), result.answer(), result.sources());
+        var turn = new Turn(question, result.mode(), result.answer(), result.sources(), OffsetDateTime.now());
         synchronized (pending) {
             pending.check();
             transaction.executeWithoutResult(status -> {
@@ -128,9 +128,10 @@ class KnowledgeConversations {
                     throw stale();
                 }
                 jdbc.update("""
-                    insert into knowledge_turn(conversation_id, turn_index, question, mode, answer, sources)
-                    values (?, ?, ?, ?, ?, ?)
-                    """, id, snapshot.turnCount(), question, turn.mode(), turn.answer(), json.write(turn.sources()));
+                    insert into knowledge_turn(conversation_id, turn_index, question, mode, answer, sources, created_at)
+                    values (?, ?, ?, ?, ?, ?, ?)
+                    """, id, snapshot.turnCount(), question, turn.mode(), turn.answer(), json.write(turn.sources()), turn.createdAt());
+                documents.countQuestions(scope);
             });
             pending.finish();
         }

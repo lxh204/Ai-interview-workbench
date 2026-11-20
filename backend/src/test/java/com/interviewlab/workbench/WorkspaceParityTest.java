@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -56,6 +57,52 @@ class WorkspaceParityTest {
         http.perform(get("/api/schedules")).andExpect(status().isOk())
             .andExpect(jsonPath("$[0].time", startsWith("2026-12-10T14:30")));
         http.perform(delete("/api/schedules/{id}", id)).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void invitationPreviewAndRescheduleKeepMeetingDetails() throws Exception {
+        String invitation = json.writeValueAsString(java.util.Map.of(
+            "text", """
+                公司：样例科技
+                岗位：Java 后端
+                面试时间：2026年12月10日下午2:30
+                面试形式：腾讯会议
+                会议链接：https://meeting.tencent.com/dm/example
+                面试官：张老师
+                第 2 轮
+                """,
+            "referenceDate", "2026-11-20", "useModel", false));
+        http.perform(post("/api/schedules/parse").contentType(MediaType.APPLICATION_JSON).content(invitation))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.company").value("样例科技"))
+            .andExpect(jsonPath("$.position").value("Java 后端"))
+            .andExpect(jsonPath("$.time", startsWith("2026-12-10T14:30")))
+            .andExpect(jsonPath("$.type").value("ONLINE"))
+            .andExpect(jsonPath("$.meetingUrl").value("https://meeting.tencent.com/dm/example"))
+            .andExpect(jsonPath("$.interviewer").value("张老师"))
+            .andExpect(jsonPath("$.round").value(2))
+            .andExpect(jsonPath("$.missing").isEmpty());
+
+        String data = """
+            {"company":"样例科技","position":"Java 后端","time":"2035-12-10T14:30","type":"ONLINE",
+             "status":"PENDING","meetingUrl":"https://meeting.tencent.com/dm/example","interviewer":"张老师",
+             "round":2,"reminderMinutes":15}
+            """;
+        var response = http.perform(post("/api/schedules").contentType(MediaType.APPLICATION_JSON).content(data))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        String id = json.readTree(response.getContentAsByteArray()).path("id").asText();
+        try {
+            http.perform(patch("/api/schedules/{id}/time", id).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"time\":\"2035-12-11T14:30:00\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.time", startsWith("2035-12-11T14:30")))
+                .andExpect(jsonPath("$.status").value("RESCHEDULED"))
+                .andExpect(jsonPath("$.meetingUrl").value("https://meeting.tencent.com/dm/example"))
+                .andExpect(jsonPath("$.reminderMinutes").value(15));
+            http.perform(patch("/api/schedules/{id}/time", id).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"time\":\"2024-12-11T14:30:00\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("EXPIRED"));
+        } finally {
+            http.perform(delete("/api/schedules/{id}", id)).andExpect(status().isNoContent());
+        }
     }
 
     @Test

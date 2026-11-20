@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api, errorMessage, json } from '../api'
 
 const typeLabels = { ONLINE: '视频面试', ONSITE: '现场面试', PHONE: '电话面试' } as const
-const statusLabels = { PENDING: '待进行', COMPLETED: '已完成', CANCELLED: '已取消' } as const
+const statusLabels = { PENDING: '待进行', COMPLETED: '已完成', CANCELLED: '已取消', EXPIRED: '已过期', RESCHEDULED: '已改期' } as const
 const viewLabels = { day: '日', week: '周', month: '月', list: '列表' } as const
 const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 
@@ -14,6 +14,10 @@ interface ScheduleFields {
   type: keyof typeof typeLabels
   location: string
   notes: string
+  meetingUrl: string
+  interviewer: string
+  round: number | null
+  reminderMinutes: number
   status: keyof typeof statusLabels
 }
 
@@ -33,7 +37,16 @@ const busy = ref(false)
 const error = ref('')
 const dialogError = ref('')
 const notice = ref('')
-const dialogMode = ref<'edit' | 'delete'>('edit')
+const dialogMode = ref<'edit' | 'delete' | 'invite' | 'move'>('edit')
+const invitation = ref('')
+const moveTime = ref('')
+const dayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
+const pending = (item: Appointment) => item.status === 'PENDING' || item.status === 'RESCHEDULED'
+const useModel = ref(false)
+const importHint = ref('')
+const dragType = 'application/x-workbench-appointment'
+const remindersShown = new Set<string>()
+let reminderTimer: number | undefined
 const editing = ref<Appointment>()
 const dialog = ref<HTMLDialogElement>()
 
@@ -59,6 +72,7 @@ const selectedDate = computed(() => new Date(selected.value + 'T00:00:00'))
 const month = computed(() => selected.value.slice(0, 7))
 const emptyForm = (day: string): ScheduleFields => ({
   company: '', position: '', time: day + 'T09:00', type: 'ONLINE', location: '', notes: '', status: 'PENDING',
+  meetingUrl: '', interviewer: '', round: null, reminderMinutes: 0,
 })
 const form = reactive(emptyForm(today))
 
@@ -70,7 +84,7 @@ const filtered = computed(() => {
     (!needle || [item.company, item.position, item.location, item.notes].join(' ').toLowerCase().includes(needle))
   )).sort((left, right) => left.time.localeCompare(right.time))
 })
-const pendingCount = computed(() => appointments.value.filter((item) => item.status === 'PENDING').length)
+const pendingCount = computed(() => appointments.value.filter(pending).length)
 const grouped = computed(() => {
   const days = new Map<string, Appointment[]>()
   for (const item of filtered.value) {
@@ -83,6 +97,17 @@ const grouped = computed(() => {
 })
 const selection = computed(() => grouped.value.get(selected.value) ?? [])
 const listItems = computed(() => allDates.value ? filtered.value : filtered.value.filter((item) => item.time.startsWith(month.value)))
+const agendaGroups = computed(() => {
+  if (view.value !== 'list') return [{ key: selected.value, items: selection.value }].filter((group) => group.items.length)
+  const groups = new Map<string, Appointment[]>()
+  for (const item of listItems.value) {
+    const key = item.time.slice(0, 10)
+    const items = groups.get(key) ?? []
+    items.push(item)
+    groups.set(key, items)
+  }
+  return [...groups].map(([key, items]) => ({ key, items }))
+})
 const calendarDays = computed(() => {
   const focus = selectedDate.value
   const isMonth = view.value === 'month'
@@ -136,6 +161,7 @@ function startCreate(day = selected.value) {
   editing.value = undefined
   dialogMode.value = 'edit'
   dialogError.value = ''
+  importHint.value = ''
   Object.assign(form, emptyForm(day))
   dialog.value?.showModal()
 }
@@ -145,9 +171,126 @@ function startEdit(item: Appointment) {
   editing.value = item
   dialogMode.value = 'edit'
   dialogError.value = ''
-  const { company, position, time, type, location, notes, status } = item
-  Object.assign(form, { company, position, time: time.slice(0, 16), type, location, notes, status })
+  importHint.value = ''
+  const { id: _id, ...fields } = item
+  Object.assign(form, { ...fields, time: item.time.slice(0, 16) })
   dialog.value?.showModal()
+}
+
+function startImport() {
+  if (loading.value || busy.value) return
+  editing.value = undefined
+  invitation.value = ''
+  useModel.value = false
+  dialogMode.value = 'invite'
+  dialogError.value = ''
+  dialog.value?.showModal()
+}
+
+async function parseInvitation() {
+  if (busy.value || !invitation.value.trim()) return
+  busy.value = true
+  dialogError.value = ''
+  try {
+    const parsed = await api<Pick<ScheduleFields, 'company' | 'position' | 'location' | 'meetingUrl' | 'interviewer' | 'round'> & {
+      time: string | null
+      type: ScheduleFields['type'] | null
+      missing: string[]
+      mode: string
+    }>('/schedules/parse', json({ text: invitation.value.trim(), referenceDate: dateKey(new Date()), useModel: useModel.value }))
+    const { missing, mode: _mode, time, type, ...fields } = parsed
+    Object.assign(form, emptyForm(selected.value), fields, { time: time?.slice(0, 16) ?? '', type: type ?? 'ONLINE' })
+    importHint.value = missing.length ? '请补充' + missing.join('、') + '，并核对识别结果。' : '已识别面试信息，请核对后保存。'
+    dialogMode.value = 'edit'
+  } catch (failure) {
+    dialogError.value = errorMessage(failure)
+  } finally {
+    busy.value = false
+  }
+}
+
+function startDrag(event: DragEvent, item: Appointment) {
+  if (!event.dataTransfer) return
+  event.dataTransfer.setData(dragType, item.id)
+  event.dataTransfer.effectAllowed = 'move'
+}
+
+function allowDrop(event: DragEvent) {
+  if (!event.dataTransfer?.types.includes(dragType) || busy.value || loading.value) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+}
+
+async function moveTo(event: DragEvent, day: string) {
+  const id = event.dataTransfer?.getData(dragType)
+  if (!id || busy.value || loading.value) return
+  event.preventDefault()
+  const item = appointments.value.find((appointment) => appointment.id === id)
+  if (!item || item.time.slice(0, 10) === day) return
+  await reschedule(item, day + item.time.slice(10))
+}
+
+function startMove(item: Appointment) {
+  if (loading.value || busy.value) return
+  editing.value = item
+  moveTime.value = item.time.slice(0, 16)
+  dialogMode.value = 'move'
+  dialogError.value = ''
+  dialog.value?.showModal()
+}
+
+async function reschedule(item: Appointment, time: string) {
+  if (busy.value || !time) return
+  busy.value = true
+  error.value = ''
+  dialogError.value = ''
+  try {
+    const moved = await patchAppointment(item, 'time', { time })
+    selected.value = moved.time.slice(0, 10)
+    notice.value = '已将「' + moved.company + '」改期到 ' + moved.time.slice(0, 16).replace('T', ' ') + '。'
+    dialog.value?.close()
+  } catch (failure) {
+    if (dialog.value?.open) dialogError.value = errorMessage(failure)
+    else error.value = errorMessage(failure)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function patchAppointment(item: Appointment, field: 'time' | 'status', data: { time: string } | { status: string }) {
+  const updated = await api<Appointment>('/schedules/' + encodeURIComponent(item.id) + '/' + field,
+    { ...json(data), method: 'PATCH' })
+  appointments.value = appointments.value.map((appointment) => appointment.id === item.id ? updated : appointment)
+  return updated
+}
+
+async function changeStatus(item: Appointment, event: Event) {
+  const input = event.target as HTMLSelectElement
+  const status = input.value
+  input.value = item.status
+  if (busy.value || status === item.status) return
+  busy.value = true
+  error.value = ''
+  try {
+    await patchAppointment(item, 'status', { status })
+    notice.value = '面试状态已更新。'
+  } catch (failure) {
+    error.value = errorMessage(failure)
+  } finally {
+    busy.value = false
+  }
+}
+
+function checkReminders() {
+  const now = Date.now()
+  const due = appointments.value.filter((item) => {
+    const remaining = new Date(item.time).getTime() - now
+    return pending(item) && item.reminderMinutes > 0 && remaining > 0 &&
+      remaining <= item.reminderMinutes * 60_000 && !remindersShown.has(item.id + item.time)
+  })
+  if (!due.length) return
+  for (const item of due) remindersShown.add(item.id + item.time)
+  notice.value = due.map((item) => item.time.slice(11, 16) + ' ' + item.company + ' ' + item.position).join('、') + ' 即将开始。'
 }
 
 function startDelete(item: Appointment) {
@@ -205,7 +348,12 @@ async function remove() {
   }
 }
 
-onMounted(() => void refresh())
+onMounted(async () => {
+  reminderTimer = window.setInterval(checkReminders, 15_000)
+  await refresh()
+  checkReminders()
+})
+onUnmounted(() => window.clearInterval(reminderTimer))
 </script>
 
 <template>
@@ -217,6 +365,7 @@ onMounted(() => void refresh())
       </div>
       <div class="actions">
         <button type="button" class="button secondary" :disabled="busy || loading" @click="refresh">刷新</button>
+        <button type="button" class="button secondary" :disabled="busy || loading || !loaded" @click="startImport">导入面试邀请</button>
         <button type="button" class="button primary" :disabled="busy || loading || !loaded" @click="startCreate()">＋ 添加面试</button>
       </div>
     </header>
@@ -269,6 +418,7 @@ onMounted(() => void refresh())
             :key="day.key"
             class="calendar-cell"
             :class="{ selected: day.key === selected, outside: day.outside }"
+            @dragover="allowDrop" @drop="moveTo($event, day.key)"
           >
             <button
               type="button"
@@ -293,7 +443,8 @@ onMounted(() => void refresh())
             <div v-if="view === 'week'" class="week-appointments">
               <button
                 v-for="item in day.items" :key="item.id" type="button" class="week-item"
-                :class="'item-' + item.status.toLowerCase()" @click="startEdit(item)"
+                :class="'item-' + item.status.toLowerCase()" :draggable="!loading && !busy"
+                @dragstart="startDrag($event, item)" @click="startEdit(item)"
               >
                 <time>{{ item.time.slice(11, 16) }}</time>
                 <strong>{{ item.company }}</strong>
@@ -313,20 +464,33 @@ onMounted(() => void refresh())
             </label>
             <button v-else type="button" class="button secondary small" @click="startCreate()">＋ 添加面试</button>
           </header>
-          <ul v-if="(view === 'list' ? listItems : selection).length" class="agenda-list">
-            <li v-for="item in view === 'list' ? listItems : selection" :key="item.id" class="agenda-row">
-              <div>
-                <time>{{ item.time.slice(0, 16).replace('T', ' ') }}</time>
-                <h3>{{ item.company }} <small>{{ item.position }}</small></h3>
-                <p>{{ typeLabels[item.type] }} <template v-if="item.location">· {{ item.location }}</template></p>
-              </div>
-              <div class="actions">
-                <span class="chip" :class="'chip-' + item.status.toLowerCase()">{{ statusLabels[item.status] }}</span>
-                <button type="button" class="text-button" @click="startEdit(item)">编辑</button>
-                <button type="button" class="text-button quiet" @click="startDelete(item)">删除</button>
-              </div>
-            </li>
-          </ul>
+          <div v-if="agendaGroups.length" class="agenda-groups">
+            <section v-for="group in agendaGroups" :key="group.key" class="agenda-group">
+              <h3 v-if="view === 'list'">{{ dayLabel.format(new Date(group.key + 'T00:00:00')) }} <small>{{ group.items.length }} 场</small></h3>
+              <ul class="agenda-list">
+                <li v-for="item in group.items" :key="item.id" class="agenda-row" :class="'item-' + item.status.toLowerCase()">
+                  <time :datetime="item.time">{{ item.time.slice(0, 16).replace('T', ' ') }}</time>
+                  <h4>{{ item.company }}</h4>
+                  <p>{{ item.position }}</p>
+                  <p class="agenda-meta">
+                    {{ typeLabels[item.type] }} <span v-if="item.round">第 {{ item.round }} 轮</span>
+                    <span class="chip" :class="'chip-' + item.status.toLowerCase()">{{ statusLabels[item.status] }}</span>
+                  </p>
+                  <p v-if="item.location || item.interviewer">{{ [item.location, item.interviewer].filter(Boolean).join(' · ') }}</p>
+                  <p v-if="item.notes" class="agenda-notes">{{ item.notes }}</p>
+                  <a v-if="item.meetingUrl" class="text-button" :href="item.meetingUrl" target="_blank" rel="noopener noreferrer">加入会议</a>
+                  <div class="actions agenda-actions">
+                    <select :value="item.status" :aria-label="item.company + ' 的面试状态'" :disabled="busy" @change="changeStatus(item, $event)">
+                      <option v-for="(label, key) in statusLabels" :key="key" :value="key">{{ label }}</option>
+                    </select>
+                    <button type="button" class="text-button" @click="startEdit(item)">编辑</button>
+                    <button type="button" class="text-button" @click="startMove(item)">改期</button>
+                    <button type="button" class="text-button quiet" @click="startDelete(item)">删除</button>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </div>
           <div v-else class="empty-state compact"><strong>暂无符合条件的面试安排</strong></div>
         </section>
       </template>
@@ -338,6 +502,7 @@ onMounted(() => void refresh())
           <h2 id="schedule-dialog-title">{{ editing ? '编辑面试日程' : '添加面试日程' }}</h2>
           <button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="closeDialog">×</button>
         </header>
+        <p v-if="importHint" class="notice" role="status">{{ importHint }}</p>
         <fieldset class="schedule-form" :disabled="busy">
           <label class="field">
             <span>公司名称</span>
@@ -360,8 +525,27 @@ onMounted(() => void refresh())
             <select v-model="form.status"><option v-for="(label, key) in statusLabels" :key="key" :value="key">{{ label }}</option></select>
           </label>
           <label class="field full">
-            <span>地点或会议链接</span>
+            <span>地点</span>
             <input v-model="form.location" type="text" maxlength="300">
+          </label>
+          <label class="field full">
+            <span>会议链接</span>
+            <input v-model="form.meetingUrl" type="url" maxlength="500" placeholder="https://">
+          </label>
+          <label class="field">
+            <span>面试官</span>
+            <input v-model="form.interviewer" type="text" maxlength="100">
+          </label>
+          <label class="field">
+            <span>轮次</span>
+            <input :value="form.round ?? ''" type="number" min="1" max="20" @input="form.round = ($event.target as HTMLInputElement).valueAsNumber || null">
+          </label>
+          <label class="field full">
+            <span>日历提醒</span>
+            <select v-model="form.reminderMinutes">
+              <option :value="0">不提醒</option>
+              <option v-for="minutes in [5, 10, 15, 30, 60]" :key="minutes" :value="minutes">提前 {{ minutes }} 分钟</option>
+            </select>
           </label>
           <label class="field full">
             <span>备注</span>
@@ -373,6 +557,38 @@ onMounted(() => void refresh())
           <button v-if="editing" type="button" class="button danger ghost" :disabled="busy" @click="startDelete(editing)">删除日程</button>
           <button type="button" class="button secondary" :disabled="busy" @click="closeDialog">取消</button>
           <button type="submit" class="button primary" :disabled="busy">{{ busy ? '正在保存…' : '保存日程' }}</button>
+        </footer>
+      </form>
+      <form v-else-if="dialogMode === 'invite'" class="field-list" @submit.prevent="parseInvitation">
+        <header class="panel-heading dialog-heading">
+          <h2 id="schedule-dialog-title">导入面试邀请</h2>
+          <button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="closeDialog">×</button>
+        </header>
+        <label class="field">
+          <span>面试邀请</span>
+          <textarea v-model="invitation" rows="8" maxlength="4000" required :disabled="busy"
+            placeholder="粘贴通知中的公司、岗位、面试时间和会议地址"></textarea>
+        </label>
+        <label class="checkbox">
+          <input v-model="useModel" type="checkbox" :disabled="busy"> 允许将邀请发送给已配置的模型，补全规则未识别的信息
+        </label>
+        <p v-if="dialogError" class="error" role="alert">{{ dialogError }}</p>
+        <footer class="actions dialog-actions">
+          <button type="button" class="button secondary" :disabled="busy" @click="closeDialog">取消</button>
+          <button type="submit" class="button primary" :disabled="busy">{{ busy ? '正在识别…' : '识别日程' }}</button>
+        </footer>
+      </form>
+      <form v-else-if="dialogMode === 'move'" class="field-list" @submit.prevent="editing && reschedule(editing, moveTime)">
+        <header class="panel-heading dialog-heading"><h2 id="schedule-dialog-title">调整面试时间</h2></header>
+        <p>{{ editing?.company }} · {{ editing?.position }}</p>
+        <label class="field">
+          <span>新的面试时间</span>
+          <input v-model="moveTime" type="datetime-local" required :disabled="busy">
+        </label>
+        <p v-if="dialogError" class="error" role="alert">{{ dialogError }}</p>
+        <footer class="actions dialog-actions">
+          <button type="button" class="button secondary" :disabled="busy" @click="closeDialog">取消</button>
+          <button type="submit" class="button primary" :disabled="busy">{{ busy ? '正在改期…' : '确认改期' }}</button>
         </footer>
       </form>
       <form v-else class="field-list" @submit.prevent="remove">
@@ -413,6 +629,7 @@ onMounted(() => void refresh())
 .week-appointments { padding: 7px; display: grid; gap: 7px; }
 .week-appointments > small { text-align: center; padding-top: 10px; }
 .week-item { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: 5px; background: var(--surface); color: var(--ink); text-align: left; overflow-wrap: anywhere; }
+.week-item[draggable="true"] { cursor: grab; }
 .week-item time, .agenda-row time { color: var(--accent); font-size: 12px; }
 .week-item span { color: var(--muted); font-size: 12px; }
 .week-item small { color: var(--muted); font-size: 11px; }
@@ -421,11 +638,19 @@ onMounted(() => void refresh())
 .agenda { margin-top: 20px; }
 .agenda .panel-heading { margin-bottom: 12px; }
 .agenda .panel-heading h2 { font-size: 16px; }
-.agenda-list { display: grid; }
-.agenda-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-.agenda-row h3 { font-size: 14px; margin: 4px 0; }
-.agenda-row h3 small { color: var(--muted); font-weight: 400; }
+.agenda-groups, .agenda-group { display: grid; gap: 11px; }
+.agenda-groups { gap: 21px; }
+.agenda-group h3, .agenda-row h4 { margin: 0; font-size: 14px; }
+.agenda-group h3 small { margin-inline-start: 6px; color: var(--muted); font-weight: 400; }
+.agenda-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.agenda-row { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 14px 15px; border: 1px solid var(--line); border-inline-start: 3px solid var(--accent); border-radius: 8px; overflow-wrap: anywhere; }
+.agenda-row.item-completed { border-inline-start-color: var(--success); }
+.agenda-row:is(.item-cancelled, .item-expired) { border-inline-start-color: var(--muted); }
 .agenda-row p, .checkbox { color: var(--muted); font-size: 13px; }
+.agenda-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.agenda-row .agenda-notes { color: var(--ink); white-space: pre-wrap; }
+.agenda-actions { align-self: stretch; border-top: 1px solid var(--line); padding-top: 10px; margin-top: auto; gap: 7px; font-size: 12px; }
+.agenda-actions select { min-height: 32px; padding: 4px 7px; margin-right: auto; }
 .checkbox { display: flex; align-items: center; gap: 5px; }
 .checkbox input { accent-color: var(--accent); }
 .schedule-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
@@ -440,7 +665,6 @@ onMounted(() => void refresh())
   .schedule-panel { padding: 13px; }
   .schedule-month { gap: 3px; }
   .schedule-month .calendar-date { padding: 6px; }
-  .agenda-row { align-items: start; flex-direction: column; }
   .schedule-form { grid-template-columns: 1fr; }
 }
 </style>

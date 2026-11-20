@@ -37,12 +37,16 @@ class InterviewService {
     }
 
     InterviewResponse create(InterviewSettings settings) {
+        if (settings.providerId() != null) gateway().requireProvider(settings.providerId());
+        InterviewRepository.ResumeSnapshot resume = settings.resumeId() == null ? null
+            : repository.findAnalyzedResume(settings.resumeId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择一份已完成分析的简历。"));
         String id = UUID.randomUUID().toString();
-        List<String> plans = InterviewQuestions.plan(settings).stream()
+        List<String> plans = InterviewQuestions.plan(settings, resume == null ? null : resume.text()).stream()
             .map(question -> json.valueToTree(question).toString())
             .toList();
         return transactions.execute(status -> {
-            repository.create(id, settings, plans);
+            repository.create(id, settings, plans, resume);
             return response(find(id));
         });
     }
@@ -59,12 +63,21 @@ class InterviewService {
         }
 
         InterviewQuestions.Question question = currentQuestion(session);
-        var saved = new InterviewResponse.Answer(question.text(), answer, feedback(question, answer), null);
+        var saved = new InterviewResponse.Answer(question.text(), answer,
+            feedback(question, answer, session.summary().providerId()), null, false, session.bookmarked(), question.parentIndex());
+        return transactions.execute(status -> saveAnswer(id, index, saved));
+    }
+
+    void saveDraft(String id, int index, String draft) {
+        checkCurrent(find(id), index);
+        if (!repository.saveDraft(id, index, draft)) throw staleQuestion();
+    }
+
+    InterviewResponse setBookmark(String id, int index, boolean bookmarked) {
         return transactions.execute(status -> {
-            if (!repository.advance(id, index)) {
-                throw staleQuestion();
-            }
-            repository.insertAnswer(id, index, saved);
+            checkCurrent(find(id), index);
+            if (!repository.lockCurrentTextQuestion(id, index)) throw staleQuestion();
+            repository.setBookmark(id, index, bookmarked);
             return response(find(id));
         });
     }
@@ -73,31 +86,41 @@ class InterviewService {
         return transactions.execute(status -> {
             InterviewRepository.Session session = find(id);
             checkCurrent(session, index);
+            if (action.equals("skip")) {
+                if (!session.summary().kind().equals("text")) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "跳过题目仅用于文字面试。");
+                }
+                InterviewQuestions.Question question = currentQuestion(session);
+                return saveAnswer(id, index, new InterviewResponse.Answer(question.text(), "", "", null, true,
+                    session.bookmarked(), question.parentIndex()));
+            }
             boolean changed = switch (action) {
                 case "pause" -> repository.setPaused(id, index, true);
                 case "resume" -> repository.setPaused(id, index, false);
                 case "finish" -> repository.finish(id, index);
                 default -> throw new IllegalArgumentException("Unknown interview action");
             };
-            if (!changed) {
-                throw staleQuestion();
-            }
+            if (!changed) throw staleQuestion();
             return response(find(id));
         });
+    }
+
+    private InterviewResponse saveAnswer(String id, int index, InterviewResponse.Answer answer) {
+        if (!repository.advance(id, index, answer.skipped())) throw staleQuestion();
+        repository.insertAnswer(id, index, answer);
+        return response(find(id));
     }
 
     private void checkCurrent(InterviewRepository.Session session, int index) {
         if (session.summary().completed()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "本场面试已完成。");
         }
-        if (session.summary().index() != index) {
-            throw staleQuestion();
-        }
+        if (session.summary().index() != index) throw staleQuestion();
     }
 
     private InterviewQuestions.Question currentQuestion(InterviewRepository.Session session) {
         if (session.questionPlan() == null) {
-            // Meetings created before interview settings were introduced used the original fixed question order.
+            // The initial fixed three-question sessions predate persisted question plans.
             return InterviewQuestions.forRole(session.summary().role()).get(session.summary().index());
         }
         try {
@@ -107,11 +130,18 @@ class InterviewService {
         }
     }
 
-    private String feedback(InterviewQuestions.Question question, String answer) {
+    private String feedback(InterviewQuestions.Question question, String answer, String providerId) {
+        String input = json.createObjectNode().put("question", question.text()).put("answer", answer).toString();
+        if (providerId != null) {
+            return "模型反馈\n" + gateway().completeForProvider(providerId, FEEDBACK_INSTRUCTION, input);
+        }
         return model.filter(ModelGateway::enabled)
-            .map(gateway -> "模型反馈\n" + gateway.complete(FEEDBACK_INSTRUCTION,
-                json.createObjectNode().put("question", question.text()).put("answer", answer).toString()))
+            .map(gateway -> "模型反馈\n" + gateway.complete(FEEDBACK_INSTRUCTION, input))
             .orElseGet(() -> question.demoFeedback(answer));
+    }
+
+    private ModelGateway gateway() {
+        return model.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "模型服务暂不可用。"));
     }
 
     private InterviewRepository.Session find(String id) {
@@ -121,10 +151,12 @@ class InterviewService {
 
     private InterviewResponse response(InterviewRepository.Session session) {
         var summary = session.summary();
-        String question = summary.completed() ? null : currentQuestion(session).text();
-        return new InterviewResponse(summary.id(), summary.role(), summary.index(), summary.total(), question,
-            summary.completed(), session.answers(), summary.topic(), summary.difficulty(), summary.kind(),
-            summary.paused(), summary.createdAt(), summary.completedAt());
+        var question = summary.completed() ? null : currentQuestion(session);
+        return new InterviewResponse(summary.id(), summary.role(), summary.index(), summary.total(),
+            question == null ? null : question.text(), summary.completed(), session.answers(), summary.topic(),
+            summary.difficulty(), summary.kind(), summary.paused(), summary.createdAt(), summary.completedAt(),
+            summary.skippedCount(), summary.resumeId(), summary.resumeName(), summary.providerId(),
+            question == null ? null : question.parentIndex(), question != null && session.bookmarked(), session.draft());
     }
 
     private ResponseStatusException staleQuestion() {

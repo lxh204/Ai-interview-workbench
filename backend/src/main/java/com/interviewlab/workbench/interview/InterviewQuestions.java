@@ -146,6 +146,49 @@ final class InterviewQuestions {
         )
     );
 
+
+    private static final Map<String, List<Question>> PROFILE_BANKS = Map.of(
+        "agent", List.of(
+            question("一个 Agent 可以查库存和提交订单。模型可能连续生成两次相同的工具调用。请设计参数校验、幂等和每轮调用上限。", "工具调用、参数校验和幂等", "工具", "校验", "幂等", "上限"),
+            question("用户让一个支持 MCP 的助手查资料，工具返回的文本混入了与任务无关的操作要求。请说明信任边界和测试方法。", "明确工具输出信任边界", "权限", "指令", "边界", "验证"),
+            question("一个计划—执行流程在中间步骤失败后经常从头重跑。你会如何记录进度、限制重试并验证恢复？", "检查点、重试预算和验证", "检查点", "状态", "预算", "恢复")
+        ),
+        "ali", List.of(
+            question("促销券投入量固定，但关闭活动前服务器收到大量重复领取请求。请拆解领取、核销和对账流程，并说明各处的一致性要求。", "区分领取、核销和对账边界", "领取", "核销", "对账", "一致性"),
+            question("商家订单导出需要跨多个分片，运营希望连续导出时能复现同一结果。你会怎样处理快照时间、分片排序和断点？", "分片聚合与一致快照", "快照", "分片", "归并", "断点"),
+            question("业务接入新的异步中间件后，重复消费和积压逐渐增加。请说明选择中间件时会比较哪些约束，并设计上线验证。", "对比中间件语义和容量", "积压", "确认", "重试", "幂等")
+        ),
+        "byte", List.of(
+            question("高并发推荐流需要按作者去重，同时保留每个主题的代表性内容。请比较在线去重和预先聚合的资源成本与召回变化。", "明确去重位置及复杂度", "哈希", "去重", "聚合", "延迟"),
+            question("上传接口在高峰时段出现排队。如何分别度量连接等待、应用执行和下游耗时，再决定是否改变线程模型？", "用分段指标定位排队来源", "连接", "线程", "队列", "耗时"),
+            question("计数服务每秒收到大量事件，产品接受短时间误差并需要分钟级汇总。请从编码、存储和校准三个层面提出设计。", "定义精度、吞吐和回补办法", "误差", "窗口", "汇总", "校准")
+        ),
+        "tencent", List.of(
+            question("长连接服务出现客户端周期性掉线。请从心跳、操作系统套接字和网关超时分别找证据。", "对比 TCP、心跳和网关超时", "tcp", "心跳", "网关", "抓包"),
+            question("Java 网络应用进程 CPU 较低，但在突发消息时延迟飙升。你会怎样检查事件循环、阻塞调用和系统缓冲区？", "事件循环与系统层观测", "事件循环", "阻塞", "缓冲", "线程"),
+            question("为多人在线房间设计丢包情况下的状态同步。请说明消息顺序、去重、快照和客户端重连之间的关系。", "对比序列号、快照与重连", "序列号", "快照", "重连", "去重")
+        )
+    );
+
+    private static final List<Question> ENGINEERING = List.of(
+        question("一次小版本发布改变了旧接口的字段含义，移动端仍有旧版本在用。你会怎样维持契约兼容并验证迁移？", "验证版本与兼容契约", "版本", "契约", "兼容", "回退"),
+        question("日志中多条异常记录没有共同标识，团队难以拼出用户操作全过程。请设计一次从客户端到持久化的可观测方案。", "贯通请求标识和日志上下文", "trace", "请求id", "链路", "日志"),
+        question("新功能只有少量边界数据出现在生产环境。你会怎样制造可控样本复现问题并确认修复，同时保护用户数据？", "用脱敏合成样本覆盖边界", "脱敏", "合成", "边界", "隔离"),
+        question("团队需要在修改生产数据格式前兼容老版本。请说明部署顺序，怎样探测老字段使用，以及何时允许移除旧格式。", "分步兼容和下线条件", "双读", "兼容", "迁移", "监测"),
+        question("某功能响应变慢后有人建议增加缓存。请说明你会先确认哪些指标，并设计一个能够否证该方案的实验。", "确定基线与反证实验", "基线", "对照", "命中率", "过期"),
+        question("下游服务慢时请求超时，重试让流量放大。你会怎么设置预算、控制重试，并验证对正常流量的影响？", "设定超时预算及触发阈值", "超时", "预算", "退避", "限流"),
+        question("两个团队维护同一个接口的生产者和消费者。你会怎样安排发布顺序、通知和契约检查，避免各自验证正确但集成失败？", "发布门禁和跨团队契约检查", "契约", "发布", "版本", "集成"),
+        question("一个异步作业可能在中途中断后从上一个检查点恢复。请说明哪些状态必须持久化，以及怎样核对恢复前后的结果。", "持久状态、可重放和对账", "检查点", "持久化", "回放", "对账"),
+        question("团队只有半天时间定位一个间歇性故障。请说明如何记录当前假设、缩小变量并与同事交接。", "明确故障范围和可重复证据", "假设", "对照", "复现", "交接")
+    );
+
+    private static Question question(String text, String cue, String... keywords) {
+        return new Question(text, List.of(new Cue(cue, keywords)));
+    }
+
+    private static List<Question> specialty(String topic) {
+        return SPECIALTIES.containsKey(topic) ? SPECIALTIES.get(topic) : PROFILE_BANKS.get(topic);
+    }
     private static final List<JdArea> JD_AREAS = List.of(
         new JdArea("Java / Spring", "spring", List.of("java", "spring", "mybatis")),
         new JdArea("数据库 / 缓存", "storage", List.of("mysql", "postgresql", "redis", "数据库", "缓存")),
@@ -158,27 +201,47 @@ final class InterviewQuestions {
         new JdArea("测试工程", "testing", List.of("测试", "playwright", "pytest", "junit", "ci/cd"))
     );
 
-    static List<Question> plan(InterviewSettings settings) {
+
+    static List<Question> plan(InterviewSettings settings, String resume) {
         var candidates = new ArrayList<Question>();
         List<String> topics = InterviewSettings.topics(settings.role());
+        if (resume != null) {
+            candidates.add(resumeQuestion(findJdAreas(resume, topics)));
+        }
         if (settings.topic().equals("jd")) {
             List<JdArea> matched = findJdAreas(settings.jdText(), topics);
             candidates.addAll(jdQuestions(matched));
             for (JdArea area : matched) {
-                candidates.add(SPECIALTIES.get(area.topic()).getFirst());
+                candidates.add(specialty(area.topic()).getFirst());
             }
         } else if (!settings.topic().equals("general")) {
-            candidates.addAll(SPECIALTIES.get(settings.topic()));
+            candidates.addAll(specialty(settings.topic()));
         }
         candidates.addAll(forRole(settings.role()));
         for (String topic : topics) {
-            candidates.addAll(SPECIALTIES.get(topic));
+            candidates.addAll(specialty(topic));
         }
-        return candidates.stream().distinct().limit(settings.questionCount())
-            .map(question -> adaptDifficulty(question, settings.difficulty()))
-            .toList();
+        candidates.addAll(ENGINEERING);
+        List<Question> unique = candidates.stream().distinct().toList();
+        var result = new ArrayList<Question>();
+        for (int position = 0; result.size() < settings.questionCount(); position++) {
+            Question selected = unique.get(position);
+            int parent = result.size();
+            result.add(adaptDifficulty(selected, settings.difficulty()));
+            if (settings.kind().equals("text") && settings.followUps() && position % 3 == 0
+                && result.size() < settings.questionCount()) {
+                result.add(selected.followUp(parent));
+            }
+        }
+        return List.copyOf(result);
     }
 
+    private static Question resumeQuestion(List<JdArea> areas) {
+        String context = areas.isEmpty() ? "从关联简历中挑一段你实际参与的项目经历。"
+            : "关联简历提到 " + String.join("、", areas.stream().map(JdArea::label).toList()) + "。请选择其中一项实际经历。";
+        return question(context + "请说明遇到的问题、你亲自完成的工作、可以复查的证据，以及还想完善的问题。",
+            "描述本人职责与可验证证据", "负责", "实现", "验证", "日志", "测试", "证据");
+    }
     private static List<JdArea> findJdAreas(String description, List<String> topics) {
         String lower = description.toLowerCase(Locale.ROOT);
         return JD_AREAS.stream().filter(area -> topics.contains(area.topic()))
@@ -217,7 +280,16 @@ final class InterviewQuestions {
         return BY_ROLE.getOrDefault(role, List.of());
     }
 
-    record Question(String text, List<Cue> cues) {
+    record Question(String text, List<Cue> cues, Integer parentIndex) {
+        Question(String text, List<Cue> cues) {
+            this(text, cues, null);
+        }
+
+        Question followUp(int parent) {
+            Cue cue = cues.getLast();
+            return new Question("沿用上一题的场景。围绕" + cue.label() + "，请给出一个能推翻你原判断的具体用例，说明输入、预期与验证步骤。",
+                List.of(cue, new Cue("说明反例以及可检查的预期", "反例", "用例", "预期", "验证", "对照")), parent);
+        }
         Question withFollowUp(String followUp, Cue cue) {
             var expanded = new ArrayList<>(cues);
             expanded.add(cue);

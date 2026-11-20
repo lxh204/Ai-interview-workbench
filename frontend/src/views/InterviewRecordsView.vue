@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { api, errorMessage } from '../api'
 import InterviewAnswers from './InterviewAnswers.vue'
-import { difficulties, interviewRoles, formatInterviewDate, pathId, reportLink, sessionLink, topicOptions, useInterviewLocation, type InterviewDetail, type InterviewKind, type InterviewRole, type InterviewSummary } from './interviewFlow'
+import { difficulties, interviewRoles, interviewTitle, formatInterviewDate, pathId, reportLink, sessionLink, useInterviewLocation, type InterviewDetail, type InterviewKind, type InterviewRole, type InterviewSummary } from './interviewFlow'
 
 const location = useInterviewLocation()
 const reportId = computed(() => pathId(location.value, '#/interview/report/'))
@@ -17,13 +17,14 @@ const kind = ref<InterviewKind | ''>('')
 const role = ref<InterviewRole | ''>('')
 const state = ref('')
 const page = ref(1)
+const bookmarkedOnly = ref(false)
 const pageSize = 10
 let requestVersion = 0
 
 const filtered = computed(() => {
   const search = keyword.value.trim().toLowerCase()
   return entries.value.filter(item => {
-    const matchesSearch = [topicOptions[item.topic].label, interviewRoles[item.role], item.id].some(value => value.toLowerCase().includes(search))
+    const matchesSearch = [interviewTitle(item.role, item.topic), interviewRoles[item.role], item.resumeName ?? '', item.id].some(value => value.toLowerCase().includes(search))
     return matchesSearch && (!kind.value || item.kind === kind.value) && (!role.value || item.role === role.value)
       && (!state.value || state.value === stateOf(item))
   })
@@ -89,6 +90,7 @@ async function exportPdf() {
 
 watch([reportId, recordRoute], () => {
   report.value = undefined
+  bookmarkedOnly.value = false
   void load()
 }, { immediate: true })
 </script>
@@ -112,22 +114,31 @@ watch([reportId, recordRoute], () => {
       <template v-else-if="report">
         <section class="panel report-overview">
           <header class="panel-heading">
-            <h2>{{ topicOptions[report.topic].label }}</h2>
+            <h2>{{ interviewTitle(report.role, report.topic) }}</h2>
             <span class="chip">{{ stateLabel(report) }}</span>
           </header>
           <dl class="report-facts">
             <div><dt>方向</dt><dd>{{ interviewRoles[report.role] }}</dd></div>
             <div><dt>面试方式</dt><dd>{{ report.kind === 'voice' ? '语音' : '文字' }}</dd></div>
             <div><dt>难度</dt><dd>{{ difficulties[report.difficulty] }}</dd></div>
-            <div><dt>作答情况</dt><dd>{{ report.index }} / {{ report.total }} 道</dd></div>
+            <div><dt>已作答</dt><dd>{{ report.index - report.skippedCount }} / {{ report.total }} 道</dd></div>
+            <div><dt>跳过</dt><dd>{{ report.skippedCount }} 道</dd></div>
+            <div><dt>未进行</dt><dd>{{ report.total - report.index }} 道</dd></div>
+            <div v-if="report.resumeName"><dt>关联简历</dt><dd>{{ report.resumeName }}</dd></div>
             <div><dt>开始时间</dt><dd>{{ formatInterviewDate(report.createdAt) }}</dd></div>
             <div><dt>完成时间</dt><dd>{{ formatInterviewDate(report.completedAt) }}</dd></div>
           </dl>
           <a v-if="!report.completed" class="button primary" :href="sessionLink(report.id, report.kind)">继续面试</a>
         </section>
         <section class="panel">
-          <header class="panel-heading"><h2>逐题回顾</h2></header>
-          <InterviewAnswers :answers="report.answers" expand-all />
+          <header class="panel-heading">
+            <h2>逐题回顾</h2>
+            <button v-if="report.answers.some(item => item.bookmarked)" type="button" class="button secondary"
+                    :aria-pressed="bookmarkedOnly" @click="bookmarkedOnly = !bookmarkedOnly">
+              {{ bookmarkedOnly ? '查看全部' : '只看收藏' }}
+            </button>
+          </header>
+          <InterviewAnswers :answers="report.answers" :bookmarked-only="bookmarkedOnly" expand-all />
         </section>
       </template>
     </template>
@@ -149,7 +160,7 @@ watch([reportId, recordRoute], () => {
             <thead><tr><th scope="col">主题 / 方向</th><th scope="col">类型</th><th scope="col">开始时间</th><th scope="col">进度</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
             <tbody>
               <tr v-for="item in visible" :key="item.id">
-                <td><strong>{{ topicOptions[item.topic].label }}</strong><small>{{ interviewRoles[item.role] }}</small></td>
+                <td><strong>{{ interviewTitle(item.role, item.topic) }}</strong><small>{{ interviewRoles[item.role] }}</small><small v-if="item.resumeName">{{ item.resumeName }}</small></td>
                 <td>{{ item.kind === 'voice' ? '语音' : '文字' }}</td>
                 <td>{{ formatInterviewDate(item.createdAt) }}</td>
                 <td>{{ item.index }} / {{ item.total }} 题</td>

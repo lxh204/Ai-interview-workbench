@@ -42,7 +42,8 @@ class InterviewController {
     @ResponseStatus(HttpStatus.CREATED)
     InterviewResponse create(@Valid @RequestBody CreateRequest request) {
         return interviews.create(InterviewSettings.create(request.role(), request.topic(), request.difficulty(),
-            request.questionCount(), request.kind(), request.jdText()));
+            request.questionCount(), request.kind(), request.jdText(), request.resumeId(), request.providerId(),
+            request.followUps()));
     }
 
     @GetMapping("/{id}")
@@ -70,21 +71,39 @@ class InterviewController {
         return interviews.changeState(id, request.index(), request.action());
     }
 
+    @PostMapping("/{id}/draft")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void draft(@PathVariable String id, @Valid @RequestBody DraftRequest request) {
+        interviews.saveDraft(id, request.index(), request.draft());
+    }
+
+    @PostMapping("/{id}/bookmark")
+    InterviewResponse bookmark(@PathVariable String id, @Valid @RequestBody BookmarkRequest request) {
+        return interviews.setBookmark(id, request.index(), request.bookmarked());
+    }
+
+    record DraftRequest(@NotNull @PositiveOrZero Integer index, @NotNull @Size(max = 8000) String draft) {}
+
+    record BookmarkRequest(@NotNull @PositiveOrZero Integer index, @NotNull Boolean bookmarked) {}
+
     record CreateRequest(
         @NotBlank(message = "请选择面试方向。")
         @Pattern(regexp = "java|ai|frontend|python|qa", message = "请选择可用的面试方向。")
         String role,
-        @Pattern(regexp = "general|spring|storage|rag|model|algorithm|frontend|python|system|testing|jd", message = "请选择可用的面试主题。")
+        @Pattern(regexp = "general|spring|storage|rag|model|algorithm|frontend|python|system|testing|agent|ali|byte|tencent|jd", message = "请选择可用的面试主题。")
         String topic,
         @Pattern(regexp = "junior|mid|senior", message = "请选择可用的面试难度。")
         String difficulty,
         @Min(value = 3, message = "每次面试至少 3 题。")
-        @Max(value = 6, message = "每次面试至多 6 题。")
+        @Max(value = 20, message = "每次面试至多 20 题。")
         Integer questionCount,
         @Pattern(regexp = "text|voice", message = "请选择文字或语音练习。")
         String kind,
         @Size(max = 3000, message = "岗位描述最长为 3000 字符。")
-        String jdText
+        String jdText,
+        @Size(max = 36) String resumeId,
+        @Size(max = 64) String providerId,
+        Boolean followUps
     ) {}
 
     record AnswerRequest(
@@ -101,7 +120,7 @@ class InterviewController {
         @PositiveOrZero(message = "题目序号不能小于 0。")
         Integer index,
         @NotNull(message = "请选择面试操作。")
-        @Pattern(regexp = "pause|resume|finish", message = "请选择可用的面试操作。")
+        @Pattern(regexp = "pause|resume|finish|skip", message = "请选择可用的面试操作。")
         String action
     ) {}
 }

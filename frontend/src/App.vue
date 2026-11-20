@@ -47,13 +47,47 @@ const shortRoutes: Record<string, string> = {
   knowledge: '/knowledgebase',
 }
 
-function readPath() {
-  const fragment = location.hash.slice(1)
-  const path = fragment || location.pathname
-  return (shortRoutes[path] ?? path).split('?')[0].replace(/\/$/, '') || '/knowledgebase'
+function syncAddress() {
+  const source = location.hash.slice(1) || location.pathname + location.search
+  const queryStart = source.indexOf('?')
+  const pathname = (queryStart < 0 ? source : source.slice(0, queryStart)).replace(/\/$/, '')
+  const params = new URLSearchParams(queryStart < 0 ? '' : source.slice(queryStart + 1))
+  let page = shortRoutes[pathname] ?? (pathname || '/knowledgebase')
+  const report = page.match(/^\/interviews\/([^/]+)$/) ??
+    page.match(/^\/voice-interview\/evaluation\/([^/]+)$/) ??
+    page.match(/^\/voice-interview\/([^/]+)\/evaluation$/)
+  const resume = page.match(/^\/interview\/([^/]+)$/)
+  const bank = page.match(/^\/knowledgebase-interview\/([^/]+)\/questions$/)
+  const records = page.match(/^\/knowledgebase-interview\/([^/]+)\/interviews$/)
+  const practiceReport = page.match(/^\/knowledgebase-interview\/[^/]+\/interviews\/([^/]+)$/)
+  const practice = page === '/knowledgebase-interview/records' ? null :
+    page.match(/^\/knowledgebase-interview\/([^/]+)$/)
+
+  if (report) {
+    page = '/interview/report/' + report[1]
+  } else if (/^\/interview\/create\/[^/]+$/.test(page)) {
+    page = '/interview'
+  } else if (resume) {
+    page = '/interview-hub'
+    params.set('resumeId', resume[1])
+  } else if (bank) {
+    page = '/knowledgebase-interview'
+    params.set('document', bank[1])
+  } else if (records) {
+    page = '/knowledgebase-interview/records'
+    params.set('document', records[1])
+  } else if (practiceReport || practice) {
+    page = '/knowledgebase-interview/records'
+    params.set('practice', (practiceReport ?? practice)![1])
+  }
+
+  const query = params.toString()
+  const canonical = '/#' + page + (query ? '?' + query : '')
+  if (location.pathname + location.search + location.hash !== canonical) history.replaceState(null, '', canonical)
+  return page
 }
 
-const path = ref(readPath())
+const path = ref(syncAddress())
 const current = computed(() => {
   const primary = mainRoutes.find((route) => route.path === path.value)
   if (primary) return primary
@@ -113,9 +147,8 @@ function handleKeys(event: KeyboardEvent) {
 }
 
 function syncRoute() {
-  const next = readPath()
+  const next = syncAddress()
   if (path.value !== next) window.scrollTo(0, 0)
-  if (shortRoutes[location.hash.slice(1)]) history.replaceState(null, '', '#' + next)
   path.value = next
   showMenu.value = false
   document.title = current.value.title + ' | AI Interview'
@@ -138,7 +171,6 @@ watch(showMenu, async (opened) => {
 })
 
 onMounted(() => {
-  if (!location.hash) history.replaceState(null, '', '#'+path.value)
   syncRoute()
   window.addEventListener('hashchange', syncRoute)
   window.addEventListener('keydown', handleKeys)

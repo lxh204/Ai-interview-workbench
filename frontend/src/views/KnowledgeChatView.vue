@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, errorMessage, json } from '../api'
 import KnowledgeDialog from './KnowledgeDialog.vue'
+import KnowledgeMarkdown from './KnowledgeMarkdown.vue'
 import {
   entityPath, knowledgeConversations, knowledgeDate, knowledgeDocuments, knowledgeParameter, streamAnswer, withMethod,
   type Conversation, type ConversationSummary, type Document, type Turn,
@@ -17,6 +18,7 @@ const partial = ref('')
 const scopeSearch = ref('')
 const historySearch = ref('')
 const loading = ref(false)
+const historyLoading = ref(false)
 const opening = ref(false)
 const sending = ref(false)
 const busy = ref(false)
@@ -31,19 +33,26 @@ let abort: AbortController | undefined
 let request: { conversation: string; id: string } | undefined
 let openVersion = 0
 let disposed = false
+let lastVisitedDocument = ''
 
 const visibleDocuments = computed(() => documents.value.filter(document =>
-  document.title.toLocaleLowerCase().includes(scopeSearch.value.trim().toLocaleLowerCase()),
+  [document.title, document.category, document.filename].some(value =>
+    value?.toLocaleLowerCase().includes(scopeSearch.value.trim().toLocaleLowerCase())),
 ))
 const history = computed(() => conversations.value.filter(session =>
-  session.title.toLocaleLowerCase().includes(historySearch.value.trim().toLocaleLowerCase()),
+  [session.title, ...namesOf(session.documentIds)].some(value =>
+    value.toLocaleLowerCase().includes(historySearch.value.trim().toLocaleLowerCase())),
 ))
-const selectedNames = computed(() => selectedIds.value.flatMap(id => documents.value.find(document => id === document.id)?.title ?? []))
+const selectedNames = computed(() => namesOf(selectedIds.value))
 const changed = computed(() => current.value && (selectedIds.value.length !== current.value.documentIds.length ||
   selectedIds.value.some(id => !current.value?.documentIds.includes(id))))
 const unavailable = computed(() => selectedIds.value.filter(id => !documents.value.some(document => document.id === id)))
 const canSend = computed(() => draft.value.trim() && selectedIds.value.length && !unavailable.value.length &&
   !sending.value && !opening.value && !busy.value)
+
+function namesOf(ids: string[]) {
+  return ids.flatMap(id => documents.value.find(document => id === document.id)?.title ?? [])
+}
 
 function setAddress(session?: string) {
   historyReplace(session ? '#/knowledgebase/chat?session=' + encodeURIComponent(session) : '#/knowledgebase/chat')
@@ -69,15 +78,19 @@ async function load() {
 
 async function applyAddress() {
   if (!location.hash.startsWith('#/knowledgebase/chat') && location.pathname !== '/knowledgebase/chat') return
-  const session = knowledgeParameter('session')
+  const session = knowledgeParameter('session') || knowledgeParameter('sessionId')
   if (session && session !== current.value?.id) {
     await openSession(session)
     return
   }
-  const document = knowledgeParameter('document')
-  if (!session && document) {
+  const documentId = knowledgeParameter('document') || knowledgeParameter('knowledgeBaseId')
+  if (!session && documentId) {
     newConversation(false)
-    selectedIds.value = [document]
+    selectedIds.value = [documentId]
+    if (lastVisitedDocument !== documentId && documents.value.some(document => document.id === documentId)) {
+      lastVisitedDocument = documentId
+      void api<void>(entityPath(knowledgeDocuments, documentId) + '/visits', { method: 'POST' }).catch(() => undefined)
+    }
   }
 }
 
@@ -101,6 +114,14 @@ function scrollToEnd() {
   void nextTick(() => {
     if (thread.value) thread.value.scrollTop = thread.value.scrollHeight
   })
+}
+
+function openCitation(turnIndex: number, number: number) {
+  const element = document.getElementById('knowledge-source-' + turnIndex + '-' + number)
+  if (element instanceof HTMLDetailsElement) {
+    element.open = true
+    element.querySelector('summary')?.focus()
+  }
 }
 
 function newConversation(changeAddress = true) {
@@ -139,6 +160,14 @@ async function openSession(id: string) {
 
 async function refreshHistory() {
   conversations.value = await api<ConversationSummary[]>(knowledgeConversations)
+}
+
+async function reloadHistory() {
+  historyLoading.value = true
+  error.value = ''
+  try { await refreshHistory() }
+  catch (failure) { error.value = errorMessage(failure) }
+  finally { historyLoading.value = false }
 }
 
 async function saveScope() {
@@ -285,9 +314,10 @@ function composerKey(event: KeyboardEvent) {
       </div>
     </header>
     <div class="knowledge-chat-layout">
-      <div class="knowledge-rail">
-        <section class="knowledge-panel knowledge-rail-panel" aria-labelledby="knowledge-scope-heading">
-          <div class="knowledge-row"><h2 id="knowledge-scope-heading">资料范围</h2><span class="knowledge-badge">已选 {{ selectedIds.length }} 份</span></div>
+      <aside class="knowledge-rail" aria-label="资料与历史会话">
+        <details open class="knowledge-panel knowledge-resource">
+          <summary><strong>资料范围</strong><span class="knowledge-badge">{{ selectedIds.length }} 份</span></summary>
+          <div class="knowledge-rail-panel">
           <input v-model="scopeSearch" type="search" placeholder="搜索可用资料…" aria-label="搜索问答资料">
           <p v-if="loading" class="muted">正在加载资料…</p>
           <p v-else-if="!documents.length" class="muted">当前没有资料。<a class="knowledge-link" href="#/knowledgebase">导入资料</a></p>
@@ -295,24 +325,31 @@ function composerKey(event: KeyboardEvent) {
           <fieldset v-else class="knowledge-scope" :disabled="sending || opening || busy">
             <label v-for="document in visibleDocuments" :key="document.id" class="knowledge-check">
               <input v-model="selectedIds" type="checkbox" :value="document.id" :disabled="selectedIds.length >= 20 && !selectedIds.includes(document.id)">
-              <span>{{ document.title }}<small class="muted">{{ document.category || '未分类' }}</small></span>
+              <span><strong>{{ document.title }}</strong><small class="muted">{{ document.category || '未分类' }}</small></span>
             </label>
           </fieldset>
           <div v-if="unavailable.length" class="knowledge-form"><p class="error">有 {{ unavailable.length }} 份已选资料已删除。</p>
             <button class="button small secondary" :disabled="sending" @click="selectedIds = selectedIds.filter(id => !unavailable.includes(id))">移除失效资料</button>
           </div>
           <button v-if="changed" class="button small secondary" :disabled="!selectedIds.length || !!unavailable.length || sending || busy" @click="saveScope">保存资料范围</button>
-        </section>
+          <p v-else-if="documents.length" class="knowledge-scope-hint muted">可选择多份资料一起提问</p>
+          </div>
+        </details>
 
-        <section class="knowledge-panel knowledge-rail-panel" aria-labelledby="knowledge-history-heading">
-          <div class="knowledge-row"><h2 id="knowledge-history-heading">历史会话</h2><span class="knowledge-badge">{{ conversations.length }}</span></div>
-          <input v-model="historySearch" type="search" placeholder="搜索会话…" aria-label="搜索历史会话">
+        <details open class="knowledge-panel knowledge-resource">
+          <summary><strong>历史会话</strong><span class="knowledge-badge">{{ conversations.length }}</span></summary>
+          <div class="knowledge-rail-panel">
+          <div class="knowledge-row">
+            <input v-model="historySearch" type="search" placeholder="搜索会话…" aria-label="搜索历史会话">
+            <button type="button" class="button small secondary" :disabled="historyLoading || sending" @click="reloadHistory">刷新</button>
+          </div>
           <p v-if="!history.length" class="muted">{{ conversations.length ? '没有匹配的会话。' : '发送问题后，会话将在这里保存。' }}</p>
           <ul v-else class="knowledge-history">
             <li v-for="session in history" :key="session.id" :class="{ active: current?.id === session.id }">
               <button type="button" class="knowledge-history-open" :disabled="sending || busy" :aria-current="current?.id === session.id ? 'true' : undefined" @click="openSession(session.id)">
                 <strong><small v-if="session.pinned" class="knowledge-badge">置顶</small> {{ session.title }}</strong>
                 <small class="muted">{{ knowledgeDate(session.updatedAt) }} · {{ session.turnCount }} 轮</small>
+                <small v-if="namesOf(session.documentIds).length" class="muted">{{ namesOf(session.documentIds).join('、') }}</small>
               </button>
               <div class="knowledge-actions">
                 <button class="button small secondary" :disabled="sending || busy" @click="togglePin(session)">{{ session.pinned ? '撤销置顶' : '置顶' }}</button>
@@ -321,17 +358,20 @@ function composerKey(event: KeyboardEvent) {
               </div>
             </li>
           </ul>
-        </section>
-      </div>
+          </div>
+        </details>
+      </aside>
 
       <section class="knowledge-panel knowledge-conversation" :aria-busy="sending || opening">
-        <header class="knowledge-conversation-head">
-          <h2>{{ current?.title || '新对话' }}</h2>
-          <p class="muted">{{ selectedNames.length ? selectedNames.join('、') : '还未选择资料' }}</p>
+        <header class="knowledge-conversation-head knowledge-row">
+          <div><h2>{{ current?.title || '新对话' }}</h2>
+            <p class="muted">{{ selectedNames.length ? '已选资料：' + selectedNames.join('、') : '还未选择资料' }}</p></div>
+          <button v-if="current" type="button" class="button small secondary" :disabled="sending || opening || busy"
+            aria-label="重新加载当前会话" @click="openSession(current.id)">刷新</button>
         </header>
         <p v-if="error" class="error knowledge-chat-feedback" role="alert">{{ error }}</p>
         <p v-if="notice" class="knowledge-notice knowledge-chat-feedback" role="status">{{ notice }}</p>
-        <div ref="thread" class="knowledge-thread" aria-label="对话消息">
+        <div ref="thread" class="knowledge-thread" role="log" aria-label="对话消息" :aria-busy="sending || opening">
           <p v-if="opening" class="knowledge-empty" role="status">正在读取会话…</p>
           <div v-else-if="!current?.turns.length && !questionInFlight" class="knowledge-empty">
             <span class="knowledge-empty-icon glyph glyph-knowledge" aria-hidden="true"></span>
@@ -339,26 +379,39 @@ function composerKey(event: KeyboardEvent) {
             <p>{{ selectedIds.length ? '试着询问一个具体的概念、流程或使用条件。' : '在资料范围中勾选资料，再输入问题。' }}</p>
           </div>
           <template v-for="(turn, index) in current?.turns" :key="index">
-            <article class="knowledge-message question"><h3>你</h3><p>{{ turn.question }}</p></article>
+            <article class="knowledge-message question"><span class="knowledge-avatar" aria-hidden="true">我</span>
+              <div class="knowledge-message-body"><h3>你 <time v-if="turn.createdAt" :datetime="turn.createdAt">{{ knowledgeDate(turn.createdAt) }}</time></h3>
+                <p>{{ turn.question }}</p></div></article>
             <article class="knowledge-message answer">
-              <h3>问答助手 <small v-if="turn.mode === 'demo'" class="knowledge-badge">本地检索</small></h3>
-              <p>{{ turn.answer }}</p>
-              <details v-for="(source, sourceIndex) in turn.sources" :key="source.documentId + '/' + source.chunkIndex" class="knowledge-source">
-                <summary>[{{ sourceIndex + 1 }}] {{ source.title }} <small class="muted">片段 {{ source.chunkIndex }}</small></summary>
-                <p>{{ source.text }}</p>
-              </details>
+              <span class="knowledge-avatar assistant" aria-hidden="true"><span class="glyph glyph-chat"></span></span>
+              <div class="knowledge-message-body">
+                <h3>问答助手 <time v-if="turn.createdAt" :datetime="turn.createdAt">{{ knowledgeDate(turn.createdAt) }}</time>
+                  <small v-if="turn.mode === 'demo'" class="knowledge-badge">本地检索</small></h3>
+                <KnowledgeMarkdown :text="turn.answer" :sources="turn.sources.length" @cite="openCitation(index, $event)" />
+                <div v-if="turn.sources.length" class="knowledge-citations">
+                  <h4>参考片段</h4>
+                  <details v-for="(source, sourceIndex) in turn.sources" :id="'knowledge-source-' + index + '-' + (sourceIndex + 1)"
+                    :key="source.documentId + '/' + source.chunkIndex" class="knowledge-source">
+                    <summary>[{{ sourceIndex + 1 }}] {{ source.title }} <small class="muted">片段 {{ source.chunkIndex }}</small></summary>
+                    <p>{{ source.text }}</p>
+                  </details>
+                </div>
+              </div>
             </article>
           </template>
           <template v-if="questionInFlight">
-            <article class="knowledge-message question"><h3>你</h3><p>{{ questionInFlight }}</p></article>
-            <article class="knowledge-message answer"><h3>问答助手</h3><p>{{ partial || '正在查找相关片段…' }}</p></article>
+            <article class="knowledge-message question"><span class="knowledge-avatar" aria-hidden="true">我</span>
+              <div class="knowledge-message-body"><h3>你</h3><p>{{ questionInFlight }}</p></div></article>
+            <article class="knowledge-message answer"><span class="knowledge-avatar assistant" aria-hidden="true"><span class="glyph glyph-chat"></span></span>
+              <div class="knowledge-message-body"><h3>问答助手</h3><KnowledgeMarkdown v-if="partial" :text="partial" />
+                <p v-else>正在查找相关片段…</p></div></article>
           </template>
         </div>
         <form class="knowledge-composer" @submit.prevent="send">
           <label class="sr-only" for="knowledge-chat-question">输入问题</label>
           <textarea id="knowledge-chat-question" ref="textarea" v-model="draft" rows="3" maxlength="500"
             placeholder="输入你的问题，Enter 发送，Shift + Enter 换行" :disabled="sending || opening" @keydown="composerKey"></textarea>
-          <div class="knowledge-row"><small class="muted">{{ draft.length }} / 500</small>
+          <div class="knowledge-row"><small class="muted">{{ selectedIds.length ? '将基于 ' + selectedIds.length + ' 份资料回答' : '请先选择资料' }} · {{ draft.length }} / 500</small>
             <button v-if="sending" type="button" class="button danger ghost" @click="stop">停止回答</button>
             <button v-else class="button primary" :disabled="!canSend">发送</button>
           </div>

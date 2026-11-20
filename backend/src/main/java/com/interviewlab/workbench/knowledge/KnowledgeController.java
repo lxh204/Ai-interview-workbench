@@ -38,6 +38,12 @@ public class KnowledgeController {
         return documents.list();
     }
 
+    @PostMapping("/documents/{id}/visits")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void visit(@PathVariable String id) {
+        documents.countAccess(id);
+    }
+
     @PostMapping("/documents")
     @ResponseStatus(HttpStatus.CREATED)
     KnowledgeDocuments.Document add(@Valid @RequestBody NewDocument input) {
@@ -79,7 +85,9 @@ public class KnowledgeController {
 
     @PostMapping("/ask")
     KnowledgeAnswers.Result ask(@Valid @RequestBody Question request) {
-        return answers.ask(request.question().strip(), List.of(), List.of(), null);
+        var result = answers.ask(request.question().strip(), List.of(), List.of(), null);
+        documents.countQuestions(result.sources().stream().map(KnowledgeAnswers.Source::documentId).distinct().toList());
+        return result;
     }
 
     record NewDocument(

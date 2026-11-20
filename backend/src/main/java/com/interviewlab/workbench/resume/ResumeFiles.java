@@ -18,7 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
 
-final class ResumeFiles {
+public final class ResumeFiles {
     static final int MAX_TEXT = 30_000;
     private static final String WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static final int MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
@@ -37,7 +37,7 @@ final class ResumeFiles {
                 }
             }
             if (filename.endsWith(".docx")) {
-                return clean(readWord(bytes));
+                return clean(readDocx(bytes));
             }
             if (filename.endsWith(".txt") || filename.endsWith(".md")) {
                 String text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
@@ -60,7 +60,7 @@ final class ResumeFiles {
         return text;
     }
 
-    private static String readWord(byte[] bytes) throws IOException, SAXException, ParserConfigurationException {
+    public static String readDocx(byte[] bytes) throws IOException, SAXException, ParserConfigurationException {
         try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             int remaining = MAX_DOCUMENT_BYTES;
             for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {

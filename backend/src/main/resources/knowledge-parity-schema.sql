@@ -2,6 +2,12 @@ alter table knowledge_document add column if not exists category varchar(100) no
 alter table knowledge_document add column if not exists filename varchar(255);
 alter table knowledge_document add column if not exists original_file blob;
 alter table knowledge_document add column if not exists original_text clob;
+alter table knowledge_document add column if not exists size_bytes bigint;
+alter table knowledge_document add column if not exists question_count bigint not null default 0;
+alter table knowledge_document add column if not exists access_count bigint not null default 0;
+
+update knowledge_document set size_bytes = coalesce(octet_length(original_file), octet_length(stringtoutf8(original_text)))
+where size_bytes is null and (original_file is not null or original_text is not null);
 
 create table if not exists knowledge_conversation (
     id varchar(36) primary key,
@@ -22,6 +28,8 @@ create table if not exists knowledge_turn (
     primary key (conversation_id, turn_index)
 );
 
+alter table knowledge_turn add column if not exists created_at timestamp with time zone;
+
 create table if not exists knowledge_question (
     id varchar(36) primary key,
     document_id varchar(36) not null references knowledge_document(id) on delete cascade,
@@ -33,6 +41,8 @@ create table if not exists knowledge_question (
     source_index integer,
     created_at timestamp with time zone not null default current_timestamp
 );
+
+alter table knowledge_question add column if not exists follow_ups clob;
 
 create table if not exists knowledge_practice (
     id varchar(36) primary key,

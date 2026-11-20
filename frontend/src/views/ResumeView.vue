@@ -259,6 +259,8 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
       </header>
       <div class="actions">
         <button class="button secondary" type="button" :disabled="downloading" @click="download(activeReview, 'original')">下载原文件</button>
+        <a v-if="activeReview.status === 'COMPLETED'" class="button secondary"
+          :href="'#/interview-hub?resumeId=' + encodeURIComponent(activeReview.id)">开始模拟面试</a>
         <button v-if="activeReview.status === 'COMPLETED'" class="button primary" type="button" :disabled="downloading" @click="download(activeReview, 'export')">导出分析报告</button>
         <button v-if="activeReview.status === 'FAILED'" type="button" :disabled="busy" class="button primary" @click="retry(activeReview)">重新分析</button>
       </div>
