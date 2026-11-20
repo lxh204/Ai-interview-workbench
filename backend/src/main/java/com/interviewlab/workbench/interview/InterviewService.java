@@ -42,7 +42,8 @@ class InterviewService {
             : repository.findAnalyzedResume(settings.resumeId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择一份已完成分析的简历。"));
         String id = UUID.randomUUID().toString();
-        List<String> plans = InterviewQuestions.plan(settings, resume == null ? null : resume.text()).stream()
+        List<String> history = repository.answeredMainQuestions(settings);
+        List<String> plans = InterviewQuestions.plan(settings, resume == null ? null : resume.text(), history).stream()
             .map(question -> json.valueToTree(question).toString())
             .toList();
         return transactions.execute(status -> {

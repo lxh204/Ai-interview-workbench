@@ -1,8 +1,10 @@
 package com.interviewlab.workbench.ai;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.net.ProtocolException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -15,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import javax.net.ssl.SSLException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -149,7 +152,7 @@ public class ModelGateway {
             Thread.currentThread().interrupt();
             throw interrupted();
         } catch (IOException | IllegalArgumentException ex) {
-            throw connectionFailed();
+            throw connectionFailed(ex);
         }
     }
 
@@ -235,18 +238,27 @@ public class ModelGateway {
             Thread.currentThread().interrupt();
             throw interrupted();
         } catch (IOException | IllegalArgumentException ex) {
-            throw connectionFailed();
+            throw connectionFailed(ex);
         }
     }
 
     private void checkStatus(int code) {
         if (code != 200) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "模型服务返回 HTTP " + code + "，请检查配置或稍后重试。");
+            String reason = "模型服务返回 HTTP " + code + "，请检查配置或稍后重试。";
+            throw switch (code) {
+                case 408, 429, 500, 502, 503, 504 -> new RetryableFailure(reason);
+                default -> new ResponseStatusException(HttpStatus.BAD_GATEWAY, reason);
+            };
         }
     }
 
-    private ResponseStatusException connectionFailed() {
-        return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "模型连接失败，请检查配置和网络。");
+    private ResponseStatusException connectionFailed(Exception failure) {
+        String reason = "模型连接失败，请检查配置和网络。";
+        if (failure instanceof IOException && !(failure instanceof JsonProcessingException)
+            && !(failure instanceof SSLException) && !(failure instanceof ProtocolException)) {
+            return new RetryableFailure(reason);
+        }
+        return new ResponseStatusException(HttpStatus.BAD_GATEWAY, reason);
     }
 
     private ResponseStatusException interrupted() {
@@ -255,6 +267,12 @@ public class ModelGateway {
 
     private ResponseStatusException invalidResponse() {
         return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "模型返回的数据格式不符合预期。");
+    }
+
+    public static final class RetryableFailure extends ResponseStatusException {
+        private RetryableFailure(String reason) {
+            super(HttpStatus.BAD_GATEWAY, reason);
+        }
     }
 
     record Configuration(String base, String chat, String embedding, String key) {

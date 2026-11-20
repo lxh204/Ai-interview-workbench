@@ -45,6 +45,8 @@ create table if not exists resume_review (
     unique (fingerprint, role_label)
 );
 create index if not exists resume_review_queue on resume_review(task_state, created_at);
+alter table resume_review add column if not exists automatic_retry_count int not null default 0;
+alter table resume_review add column if not exists next_attempt_at timestamp with time zone;
 
 create table if not exists model_provider (
     id varchar(36) primary key,

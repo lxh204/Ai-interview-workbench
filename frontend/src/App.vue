@@ -10,17 +10,17 @@ const views = Object.fromEntries(Object.entries(files).map(([filename, load]) =>
 ]))
 
 const groups = [
-  { label: '知识与练习', items: [
-    { path: '/knowledgebase', title: '知识库管理', icon: 'database', view: 'KnowledgeView' },
-    { path: '/knowledgebase/chat', title: '问答助手', icon: 'chat', view: 'KnowledgeChatView' },
-    { path: '/knowledgebase-interview', title: '知识库面试', icon: 'book', view: 'KnowledgeBankView' },
-    { path: '/knowledgebase-interview/records', title: '知识库面试记录', icon: 'records', view: 'KnowledgeRecordsView' },
-  ] },
   { label: '面试准备', items: [
     { path: '/history', title: '简历管理', icon: 'files', view: 'ResumeView' },
     { path: '/interview-hub', title: '模拟面试', icon: 'sparkle', view: 'InterviewView' },
     { path: '/interviews', title: '面试记录', icon: 'records', view: 'InterviewRecordsView' },
     { path: '/interview-schedule', title: '面试日程', icon: 'calendar', view: 'ScheduleView' },
+  ] },
+  { label: '知识与练习', items: [
+    { path: '/knowledgebase', title: '知识库管理', icon: 'database', view: 'KnowledgeView' },
+    { path: '/knowledgebase/chat', title: '问答助手', icon: 'chat', view: 'KnowledgeChatView' },
+    { path: '/knowledgebase-interview', title: '知识库面试', icon: 'book', view: 'KnowledgeBankView' },
+    { path: '/knowledgebase-interview/records', title: '知识库面试记录', icon: 'records', view: 'KnowledgeRecordsView' },
   ] },
   { label: '系统', items: [
     { path: '/settings', title: '设置', icon: 'settings', view: 'SettingsView' },
@@ -52,7 +52,7 @@ function syncAddress() {
   const queryStart = source.indexOf('?')
   const pathname = (queryStart < 0 ? source : source.slice(0, queryStart)).replace(/\/$/, '')
   const params = new URLSearchParams(queryStart < 0 ? '' : source.slice(queryStart + 1))
-  let page = shortRoutes[pathname] ?? (pathname || '/knowledgebase')
+  let page = shortRoutes[pathname] ?? (pathname || '/history')
   const report = page.match(/^\/interviews\/([^/]+)$/) ??
     page.match(/^\/voice-interview\/evaluation\/([^/]+)$/) ??
     page.match(/^\/voice-interview\/([^/]+)\/evaluation$/)
@@ -81,15 +81,22 @@ function syncAddress() {
     params.set('practice', (practiceReport ?? practice)![1])
   }
 
+  if (page === '/knowledgebase-interview' && !params.has('document') && params.has('knowledgeBaseId')) {
+    params.set('document', params.get('knowledgeBaseId') ?? '')
+  }
   const query = params.toString()
   const canonical = '/#' + page + (query ? '?' + query : '')
   if (location.pathname + location.search + location.hash !== canonical) history.replaceState(null, '', canonical)
-  return page
+  return { page, query }
 }
 
-const path = ref(syncAddress())
+const address = ref(syncAddress())
+const path = computed(() => address.value.page)
 const current = computed(() => {
   const primary = mainRoutes.find((route) => route.path === path.value)
+  if (primary?.view === 'KnowledgeBankView' && !new URLSearchParams(address.value.query).get('document')) {
+    return { ...primary, view: 'KnowledgeOverviewView' }
+  }
   if (primary) return primary
 
   const detail = detailRoutes.find((route) => route.pattern.test(path.value))
@@ -148,8 +155,8 @@ function handleKeys(event: KeyboardEvent) {
 
 function syncRoute() {
   const next = syncAddress()
-  if (path.value !== next) window.scrollTo(0, 0)
-  path.value = next
+  if (path.value !== next.page) window.scrollTo(0, 0)
+  address.value = next
   showMenu.value = false
   document.title = current.value.title + ' | AI Interview'
 }
@@ -202,7 +209,7 @@ onUnmounted(() => {
       aria-label="工作区导航"
     >
       <div class="sidebar-head">
-        <a class="brand" href="#/knowledgebase" @click="showMenu = false">
+        <a class="brand" href="#/history" @click="showMenu = false">
           <span class="brand-symbol"><span class="glyph glyph-chat" aria-hidden="true"></span></span>
           <span><strong>AI Interview</strong><small>面试准备工作台</small></span>
         </a>
@@ -266,7 +273,7 @@ onUnmounted(() => {
         />
         <section v-else class="panel empty-state">
           <h1>页面不存在</h1>
-          <a class="button primary" href="#/knowledgebase">返回知识库</a>
+          <a class="button primary" href="#/history">返回简历管理</a>
         </section>
       </main>
     </div>

@@ -80,14 +80,17 @@ async function loadDocuments() {
   }
 }
 
-async function loadQuestions(id = selectedDocument.value) {
+async function loadQuestions(id = selectedDocument.value, action = '') {
   if (!id) return
   const version = ++requestVersion
   loading.value = true
   error.value = ''
   try {
     const result = await api<Question[]>(bankPath(id))
-    if (version === requestVersion) questions.value = result
+    if (version === requestVersion) {
+      questions.value = result
+      openAddressAction(action)
+    }
   } catch (failure) {
     if (version === requestVersion) error.value = errorMessage(failure)
   } finally {
@@ -105,14 +108,32 @@ watch(selectedDocument, id => {
   word.value = ''
   notice.value = ''
   if (id) {
+    const source = knowledgeParameter('document') || knowledgeParameter('knowledgeBaseId')
+    const action = source === id ? knowledgeParameter('action') : ''
     window.history.replaceState(null, '', bankLink(id))
-    void loadQuestions(id)
+    void loadQuestions(id, action)
   }
 })
 
 function applyAddress() {
   if (busy.value || location.hash.split('?')[0] !== '#/knowledgebase-interview') return
-  selectAddress(knowledgeParameter('document') || knowledgeParameter('knowledgeBaseId'))
+  const id = knowledgeParameter('document') || knowledgeParameter('knowledgeBaseId')
+  const action = knowledgeParameter('action')
+  if (id && id === selectedDocument.value && action) {
+    window.history.replaceState(null, '', bankLink(id))
+    if (loading.value) void loadQuestions(id, action)
+    else openAddressAction(action)
+    return
+  }
+  selectAddress(id)
+}
+
+function openAddressAction(action: string) {
+  if (action === 'generate') show('generate')
+  if (action === 'start') {
+    if (drawPool.value.length) show('start')
+    else notice.value = '请先启用一道题，再开始练习。'
+  }
 }
 
 function selectAddress(id: string) {
@@ -242,6 +263,7 @@ async function submit() {
     <header class="knowledge-header page-header">
       <div><h1>知识库面试</h1><p>根据资料建立自己的面试题库，启用题目后按方向或难度练习。</p></div>
       <div class="knowledge-actions">
+        <a class="button secondary" href="#/knowledgebase-interview">面试总览</a>
         <a class="button secondary" :href="knowledgeRecordsLink(selectedDocument)">练习记录</a>
         <button class="button primary" :disabled="!drawPool.length || busy" @click="show('start')">开始练习</button>
       </div>

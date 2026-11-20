@@ -2,18 +2,22 @@
 import { computed, ref, watch } from 'vue'
 import { api, errorMessage } from '../api'
 import InterviewAnswers from './InterviewAnswers.vue'
-import { difficulties, interviewRoles, interviewTitle, formatInterviewDate, pathId, reportLink, sessionLink, useInterviewLocation, type InterviewDetail, type InterviewKind, type InterviewRole, type InterviewSummary } from './interviewFlow'
+import { knowledgePractices, practiceLink, type PracticeSummary } from './knowledge'
+import { difficulties, interviewRoles, interviewTitle, formatInterviewDate, pathId, repeatInterviewLink, reportLink, sessionLink, useInterviewLocation, type InterviewDetail, type InterviewKind, type InterviewRole, type InterviewSummary } from './interviewFlow'
 
 const location = useInterviewLocation()
 const reportId = computed(() => pathId(location.value, '#/interview/report/'))
 const recordRoute = computed(() => location.value.split('?')[0].replace(/\/$/, '') === '#/interviews')
 const entries = ref<InterviewSummary[]>([])
+const practices = ref<PracticeSummary[]>([])
+const kindLabels = { text: '文字面试', voice: '语音面试', knowledge: '知识库面试' }
+type RecordKind = InterviewKind | 'knowledge'
 const report = ref<InterviewDetail>()
 const pending = ref(false)
 const error = ref('')
 const exporting = ref(false)
 const keyword = ref('')
-const kind = ref<InterviewKind | ''>('')
+const kind = ref<RecordKind | ''>('')
 const role = ref<InterviewRole | ''>('')
 const state = ref('')
 const page = ref(1)
@@ -21,17 +25,37 @@ const bookmarkedOnly = ref(false)
 const pageSize = 10
 let requestVersion = 0
 
+const rows = computed(() => [
+  ...entries.value.map(item => ({
+    id: item.id, kind: item.kind, title: interviewTitle(item.role, item.topic),
+    role: item.role, subtitle: interviewRoles[item.role], resumeName: item.resumeName, time: item.createdAt,
+    index: item.index, total: item.total, state: stateOf(item), stateLabel: stateLabel(item),
+    action: item.completed ? '查看报告' : '继续面试',
+    href: item.completed ? reportLink(item.id) : sessionLink(item.id, item.kind),
+  })),
+  ...practices.value.map(item => ({
+    id: item.id, kind: 'knowledge' as const, title: item.documentTitle,
+    role: '', subtitle: '', resumeName: null, time: item.updatedAt,
+    index: item.index, total: item.total, state: item.completed ? 'completed' : 'active',
+    stateLabel: item.completed ? '已完成' : '进行中',
+    action: item.completed ? '查看练习' : '继续面试', href: practiceLink(item.id, item.documentId),
+  })),
+].sort((left, right) =>
+  (Date.parse(right.time ?? '') || 0) - (Date.parse(left.time ?? '') || 0),
+))
+
 const filtered = computed(() => {
   const search = keyword.value.trim().toLowerCase()
-  return entries.value.filter(item => {
-    const matchesSearch = [interviewTitle(item.role, item.topic), interviewRoles[item.role], item.resumeName ?? '', item.id].some(value => value.toLowerCase().includes(search))
-    return matchesSearch && (!kind.value || item.kind === kind.value) && (!role.value || item.role === role.value)
-      && (!state.value || state.value === stateOf(item))
-  })
+  return rows.value.filter(item =>
+    [item.title, item.subtitle, item.resumeName ?? '', item.id].some(value => value.toLowerCase().includes(search))
+    && (!kind.value || item.kind === kind.value) && (!role.value || item.role === role.value)
+    && (!state.value || state.value === item.state),
+  )
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
 const visible = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
 watch([keyword, kind, role, state], () => { page.value = 1 })
+watch(kind, value => { if (value === 'knowledge') role.value = '' })
 watch(pageCount, maximum => { if (page.value > maximum) page.value = maximum })
 
 function stateOf(item: InterviewSummary) {
@@ -54,8 +78,19 @@ async function load() {
       const updated = await api<InterviewDetail>('/interviews/' + encodeURIComponent(id))
       if (version === requestVersion) report.value = updated
     } else {
-      const updated = await api<InterviewSummary[]>('/interviews')
-      if (version === requestVersion) entries.value = updated
+      const [interviews, library] = await Promise.allSettled([
+        api<InterviewSummary[]>('/interviews'), api<PracticeSummary[]>(knowledgePractices),
+      ])
+      if (version !== requestVersion) return
+      if (interviews.status === 'fulfilled') entries.value = interviews.value
+      if (library.status === 'fulfilled') practices.value = library.value
+      if (interviews.status === 'rejected' && library.status === 'rejected') {
+        error.value = errorMessage(interviews.reason)
+      } else if (interviews.status === 'rejected') {
+        error.value = '文字和语音面试记录读取失败，可以重试。'
+      } else if (library.status === 'rejected') {
+        error.value = '知识库练习记录读取失败，可以重试。'
+      }
     }
   } catch (failure) {
     if (version === requestVersion) error.value = errorMessage(failure)
@@ -129,6 +164,7 @@ watch([reportId, recordRoute], () => {
             <div><dt>完成时间</dt><dd>{{ formatInterviewDate(report.completedAt) }}</dd></div>
           </dl>
           <a v-if="!report.completed" class="button primary" :href="sessionLink(report.id, report.kind)">继续面试</a>
+          <a v-else class="button secondary" :href="repeatInterviewLink(report)">重新练习</a>
         </section>
         <section class="panel">
           <header class="panel-heading">
@@ -145,29 +181,27 @@ watch([reportId, recordRoute], () => {
     <section v-else class="panel">
       <div class="records-filters">
         <label class="field"><span>搜索记录</span><input v-model="keyword" type="search" placeholder="主题、方向或编号"></label>
-        <label class="field"><span>面试类型</span><select v-model="kind"><option value="">全部类型</option><option value="text">文字面试</option><option value="voice">语音面试</option></select></label>
-        <label class="field"><span>岗位方向</span><select v-model="role"><option value="">全部方向</option><option v-for="(label, id) in interviewRoles" :key="id" :value="id">{{ label }}</option></select></label>
+        <label class="field"><span>面试类型</span><select v-model="kind"><option value="">全部类型</option><option v-for="(label, id) in kindLabels" :key="id" :value="id">{{ label }}</option></select></label>
+        <label class="field"><span>岗位方向</span><select v-model="role" :disabled="kind === 'knowledge'"><option value="">全部方向</option><option v-for="(label, id) in interviewRoles" :key="id" :value="id">{{ label }}</option></select></label>
         <label class="field"><span>状态</span><select v-model="state"><option value="">全部状态</option><option value="active">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option></select></label>
       </div>
-      <p v-if="pending && !entries.length" role="status">正在读取面试记录…</p>
+      <p v-if="pending && !rows.length" role="status">正在读取面试记录…</p>
       <div v-else-if="!filtered.length && !error" class="empty-state">
-        <strong>{{ entries.length ? '没有符合条件的记录' : '还没有面试记录' }}</strong>
-        <a v-if="!entries.length" class="button secondary" href="#/interview-hub">前往模拟面试</a>
+        <strong>{{ rows.length ? '没有符合条件的记录' : '还没有面试记录' }}</strong>
+        <a v-if="!rows.length" class="button secondary" href="#/interview-hub">前往模拟面试</a>
       </div>
       <template v-else-if="filtered.length">
         <div class="records-table" tabindex="0" aria-label="面试记录表格，可横向滚动">
           <table>
-            <thead><tr><th scope="col">主题 / 方向</th><th scope="col">类型</th><th scope="col">开始时间</th><th scope="col">进度</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
+            <thead><tr><th scope="col">主题 / 方向</th><th scope="col">类型</th><th scope="col">记录时间</th><th scope="col">进度</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
             <tbody>
-              <tr v-for="item in visible" :key="item.id">
-                <td><strong>{{ interviewTitle(item.role, item.topic) }}</strong><small>{{ interviewRoles[item.role] }}</small><small v-if="item.resumeName">{{ item.resumeName }}</small></td>
-                <td>{{ item.kind === 'voice' ? '语音' : '文字' }}</td>
-                <td>{{ formatInterviewDate(item.createdAt) }}</td>
+              <tr v-for="item in visible" :key="item.kind + ':' + item.id">
+                <td><strong>{{ item.title }}</strong><small v-if="item.subtitle">{{ item.subtitle }}</small><small v-if="item.resumeName">{{ item.resumeName }}</small></td>
+                <td>{{ kindLabels[item.kind] }}</td>
+                <td>{{ formatInterviewDate(item.time) }}</td>
                 <td>{{ item.index }} / {{ item.total }} 题</td>
-                <td><span class="chip">{{ stateLabel(item) }}</span></td>
-                <td><a class="button secondary" :href="item.completed ? reportLink(item.id) : sessionLink(item.id, item.kind)">
-                  {{ item.completed ? '查看报告' : '继续面试' }}
-                </a></td>
+                <td><span class="chip">{{ item.stateLabel }}</span></td>
+                <td><a class="button secondary" :href="item.href">{{ item.action }}</a></td>
               </tr>
             </tbody>
           </table>

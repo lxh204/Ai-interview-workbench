@@ -41,6 +41,21 @@ class InterviewRepository {
         }
     }
 
+    List<String> answeredMainQuestions(InterviewSettings settings) {
+        return jdbc.query("""
+            SELECT a.question_text
+            FROM interview_answer a
+            JOIN interview_session s ON s.id = a.session_id
+            WHERE s.role_code = ? AND s.topic_code = ? AND s.kind_code = ?
+                AND (CAST(? AS VARCHAR(36)) IS NULL OR s.resume_id = ?)
+                AND a.skipped = FALSE AND a.follow_up_of IS NULL
+                AND REGEXP_LIKE(a.answer_text, '[^\\p{javaWhitespace}]')
+            GROUP BY a.question_text
+            ORDER BY MAX(s.created_at) ASC NULLS FIRST, MIN(a.question_index), a.question_text
+            """, (rows, index) -> rows.getString("question_text"),
+            settings.role(), settings.topic(), settings.kind(), settings.resumeId(), settings.resumeId());
+    }
+
     List<InterviewResponse.Summary> list() {
         return jdbc.query("""
             SELECT * FROM interview_session ORDER BY created_at DESC NULLS LAST, id

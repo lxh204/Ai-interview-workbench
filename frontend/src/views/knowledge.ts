@@ -70,6 +70,21 @@ export interface Practice extends PracticeSummary {
   answers: { index: number; content: string; feedback: string }[]
 }
 
+export interface BankSummary {
+  id: string
+  title: string
+  filename: string | null
+  category: string
+  createdAt: string
+  total: number
+  draft: number
+  active: number
+  archived: number
+  practices: number
+  completed: number
+  lastPractice: string | null
+}
+
 export const knowledgeDocuments = '/knowledge/documents'
 export const knowledgeConversations = '/knowledge/conversations'
 export const knowledgePractices = '/knowledge/practices'
@@ -77,7 +92,8 @@ export const knowledgePractices = '/knowledge/practices'
 export const entityPath = (base: string, id: string) => base + '/' + encodeURIComponent(id)
 export const bankPath = (id: string) => entityPath(knowledgeDocuments, id) + '/questions'
 export const chatLink = (id: string) => '#/knowledgebase/chat?document=' + encodeURIComponent(id)
-export const bankLink = (id: string) => '#/knowledgebase-interview?document=' + encodeURIComponent(id)
+export const bankLink = (id: string, action?: 'start' | 'generate') => '#/knowledgebase-interview?document=' + encodeURIComponent(id) +
+  (action ? '&action=' + action : '')
 export const knowledgeRecordsLink = (documentId?: string) => '#/knowledgebase-interview/records' +
   (documentId ? '?document=' + encodeURIComponent(documentId) : '')
 export const practiceLink = (id: string, documentId?: string) => '#/knowledgebase-interview/records?practice=' + encodeURIComponent(id) +

@@ -4,7 +4,7 @@ import { api } from '../api'
 import { browserSpeechAvailable, cloudCaptureAvailable, useVoiceCapture, type CaptureMethod } from '../voice/voiceCapture'
 import InterviewAnswers from './InterviewAnswers.vue'
 import InterviewSetup from './InterviewSetup.vue'
-import { difficulties, interviewRoles, reportLink, sessionLink, topicOptions, useInterviewLocation, useInterviewSession, type InterviewConfig } from './interviewFlow'
+import { difficulties, interviewRoles, reportLink, sessionLink, topicOptions, useInterviewLocation, useInterviewSession, voicePlanKey, type InterviewConfig } from './interviewFlow'
 
 const location = useInterviewLocation()
 const routeId = computed(() => {
@@ -113,7 +113,7 @@ function applyClock() {
     clockId = id
     if (id) {
       elapsedBefore = Math.max(0, Number(storeRead(`interview-voice:${id}:time`)) || 0)
-      const planned = Number(storeRead(`interview-voice:${id}:planned`))
+      const planned = Number(storeRead(voicePlanKey(id)))
       if (Number.isInteger(planned) && planned >= 5 && planned <= 120) plannedMinutes.value = planned
       else plannedMinutes.value = 30
     } else {
@@ -218,11 +218,9 @@ async function startVoice(config: InterviewConfig) {
     error.value = '请输入 5 到 120 分钟的计划时长。'
     return
   }
-  await start(config)
-  if (session.value?.kind === 'voice') {
-    storeWrite(`interview-voice:${session.value.id}:planned`, String(planned))
-    plannedMinutes.value = planned
-  }
+  await start(config, created => {
+    storeWrite(voicePlanKey(created.id), String(planned))
+  })
 }
 
 async function pauseOrResume() {

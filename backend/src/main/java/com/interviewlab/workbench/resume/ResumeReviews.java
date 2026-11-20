@@ -1,5 +1,6 @@
 package com.interviewlab.workbench.resume;
 
+import com.interviewlab.workbench.ai.ModelGateway;
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -22,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 @DependsOnDatabaseInitialization
 public class ResumeReviews {
+    private static final List<Integer> RETRY_DELAYS_SECONDS = List.of(1, 2, 4);
     private static final String SUMMARY_COLUMNS = "id, filename, role_label, task_state, feedback, fail_reason, created_at";
     private final JdbcTemplate jdbc;
     private final ResumeController analyzer;
@@ -33,7 +35,7 @@ public class ResumeReviews {
 
     @PostConstruct
     void recover() {
-        jdbc.update("update resume_review set task_state = 'PENDING' where task_state = 'RUNNING'");
+        jdbc.update("update resume_review set task_state = 'PENDING', next_attempt_at = NULL where task_state = 'RUNNING'");
     }
 
     Review enqueue(String title, String role, String text, byte[] bytes) {
@@ -81,7 +83,10 @@ public class ResumeReviews {
 
     void retry(String id) {
         detail(id);
-        if (jdbc.update("update resume_review set task_state='PENDING', fail_reason=null where id=? and task_state='FAILED'", id) == 0) {
+        if (jdbc.update("""
+            update resume_review set task_state='PENDING', fail_reason=null, automatic_retry_count=0, next_attempt_at=null
+            where id=? and task_state='FAILED'
+            """, id) == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "只能重试分析失败的简历。");
         }
     }
@@ -94,14 +99,21 @@ public class ResumeReviews {
 
     @Scheduled(initialDelay = 1600, fixedDelay = 600)
     void work() {
-        List<String> pending = jdbc.queryForList("""
-            select id from resume_review where task_state='PENDING' order by created_at, id limit 1
-            """, String.class);
+        List<PendingReview> pending = jdbc.query("""
+            select id, automatic_retry_count from resume_review where task_state='PENDING'
+                and (next_attempt_at is null or next_attempt_at <= current_timestamp)
+            order by created_at, id limit 1
+            """, (rs, row) -> new PendingReview(rs.getString("id"), rs.getInt("automatic_retry_count")));
         if (pending.isEmpty()) {
             return;
         }
-        String id = pending.getFirst();
-        if (jdbc.update("update resume_review set task_state='RUNNING' where id=? and task_state='PENDING'", id) == 0) {
+        PendingReview selected = pending.getFirst();
+        String id = selected.id();
+        if (jdbc.update("""
+            update resume_review set task_state='RUNNING', next_attempt_at=null
+            where id=? and task_state='PENDING' and automatic_retry_count=?
+                and (next_attempt_at is null or next_attempt_at <= current_timestamp)
+            """, id, selected.retries()) == 0) {
             return;
         }
         try {
@@ -110,10 +122,23 @@ public class ResumeReviews {
             jdbc.update("update resume_review set task_state='COMPLETED', feedback=?, fail_reason=null where id=? and task_state='RUNNING'",
                 analyzed.feedback(), id);
         } catch (ResponseStatusException ex) {
-            fail(id, ex.getReason() == null ? "分析未完成，请重试。" : ex.getReason());
+            if (ex instanceof ModelGateway.RetryableFailure && selected.retries() < RETRY_DELAYS_SECONDS.size()) {
+                reschedule(selected);
+            } else {
+                fail(id, ex.getReason() == null ? "分析未完成，请重试。" : ex.getReason());
+            }
         } catch (RuntimeException ex) {
             fail(id, "分析任务未完成，请重试。");
         }
+    }
+
+    private void reschedule(PendingReview review) {
+        int delaySeconds = RETRY_DELAYS_SECONDS.get(review.retries());
+        jdbc.update("""
+            update resume_review set task_state='PENDING', fail_reason=null, automatic_retry_count=automatic_retry_count+1,
+                next_attempt_at=DATEADD('SECOND', ?, CURRENT_TIMESTAMP)
+            where id=? and task_state='RUNNING' and automatic_retry_count=?
+            """, delaySeconds, review.id(), review.retries());
     }
 
     private void fail(String id, String reason) {
@@ -133,6 +158,8 @@ public class ResumeReviews {
             throw new IllegalStateException(ex);
         }
     }
+
+    private record PendingReview(String id, int retries) {}
 
     record Review(String id, String filename, String role, String status, String feedback, String error,
                   Instant createdAt, String text) {}

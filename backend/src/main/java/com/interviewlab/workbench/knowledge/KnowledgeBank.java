@@ -40,6 +40,33 @@ class KnowledgeBank {
         this.model = model;
     }
 
+    List<BankSummary> summaries() {
+        return jdbc.query("""
+            select d.id, d.title, d.filename, d.category, d.created_at,
+              coalesce(q.total, 0) as total, coalesce(q.draft, 0) as draft,
+              coalesce(q.active, 0) as active, coalesce(q.archived, 0) as archived,
+              coalesce(p.practices, 0) as practices, coalesce(p.completed, 0) as completed, p.last_practice
+            from knowledge_document d
+            left join (
+                select document_id, count(*) as total,
+                  count(case when status = 'DRAFT' then 1 end) as draft,
+                  count(case when status = 'ACTIVE' then 1 end) as active,
+                  count(case when status = 'ARCHIVED' then 1 end) as archived
+                from knowledge_question group by document_id
+            ) q on q.document_id = d.id
+            left join (
+                select document_id, count(*) as practices,
+                  count(case when current_index >= total then 1 end) as completed, max(updated_at) as last_practice
+                from knowledge_practice group by document_id
+            ) p on p.document_id = d.id
+            where exists (select 1 from knowledge_chunk c where c.document_id = d.id)
+            order by d.created_at desc, d.id
+            """, (rs, row) -> new BankSummary(rs.getString("id"), rs.getString("title"), rs.getString("filename"),
+                rs.getString("category"), rs.getObject("created_at", OffsetDateTime.class), rs.getLong("total"),
+                rs.getLong("draft"), rs.getLong("active"), rs.getLong("archived"), rs.getLong("practices"),
+                rs.getLong("completed"), rs.getObject("last_practice", OffsetDateTime.class)));
+    }
+
     List<Item> list(String documentId) {
         documents.get(documentId);
         return jdbc.query(SELECT + " where q.document_id = ? order by q.created_at desc, q.id", this::read, documentId);
@@ -218,6 +245,9 @@ class KnowledgeBank {
     record Draft(String question, String referenceAnswer, String category, String difficulty, String status, List<FollowUp> followUps) {}
     record Generated(String question, String referenceAnswer, int sourceIndex, List<FollowUp> followUps) {}
     record FollowUp(String question, String referenceAnswer) {}
+    record BankSummary(String id, String title, String filename, String category, OffsetDateTime createdAt,
+                       long total, long draft, long active, long archived, long practices, long completed,
+                       OffsetDateTime lastPractice) {}
     record Item(String id, String documentId, String question, String referenceAnswer, String category, String difficulty,
                 String status, Integer sourceIndex, String sourceText, OffsetDateTime createdAt,
                 List<FollowUp> followUps, Integer followUpIndex) {

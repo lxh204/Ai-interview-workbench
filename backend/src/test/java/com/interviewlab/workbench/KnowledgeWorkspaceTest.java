@@ -127,6 +127,12 @@ class KnowledgeWorkspaceTest {
             .andExpect(status().isCreated()).andExpect(jsonPath("$.total").value(4))
             .andExpect(jsonPath("$.questions[1].followUpIndex").value(1))
             .andReturn().getResponse();
+        http.perform(get("/api/knowledge/question-banks")).andExpect(status().isOk())
+            .andExpect(jsonPath("$[?(@.id == '" + documentId + "')].active", contains(2)))
+            .andExpect(jsonPath("$[?(@.id == '" + documentId + "')].draft", contains(0)))
+            .andExpect(jsonPath("$[?(@.id == '" + documentId + "')].practices", contains(1)))
+            .andExpect(jsonPath("$[?(@.id == '" + documentId + "')].completed", contains(0)))
+            .andExpect(jsonPath("$[?(@.id == '" + documentId + "')].lastPractice").isNotEmpty());
         http.perform(delete("/api/knowledge/documents/{id}", documentId)).andExpect(status().isNoContent());
         http.perform(get("/api/knowledge/practices/{id}", id(practice.getContentAsByteArray())))
             .andExpect(status().isOk()).andExpect(jsonPath("$.questions[3].followUpIndex").value(1));

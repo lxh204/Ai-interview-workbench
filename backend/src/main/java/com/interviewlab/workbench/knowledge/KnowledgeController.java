@@ -27,15 +27,22 @@ import org.springframework.web.multipart.MultipartFile;
 public class KnowledgeController {
     private final KnowledgeDocuments documents;
     private final KnowledgeAnswers answers;
+    private final KnowledgeBank bank;
 
-    public KnowledgeController(KnowledgeDocuments documents, KnowledgeAnswers answers) {
+    public KnowledgeController(KnowledgeDocuments documents, KnowledgeAnswers answers, KnowledgeBank bank) {
         this.documents = documents;
         this.answers = answers;
+        this.bank = bank;
     }
 
     @GetMapping("/documents")
     List<KnowledgeDocuments.Document> list() {
         return documents.list();
+    }
+
+    @GetMapping("/question-banks")
+    List<KnowledgeBank.BankSummary> questionBanks() {
+        return bank.summaries();
     }
 
     @PostMapping("/documents/{id}/visits")

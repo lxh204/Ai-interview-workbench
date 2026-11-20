@@ -73,6 +73,23 @@ export function reportLink(id: string) {
   return '#/interview/report/' + encodeURIComponent(id)
 }
 
+export function voicePlanKey(sessionId: string) {
+  return 'interview-voice:' + sessionId + ':planned'
+}
+
+export function repeatInterviewLink(item: InterviewSummary) {
+  const config = new URLSearchParams({
+    mode: item.kind,
+    role: item.role,
+    topic: item.topic,
+    difficulty: item.difficulty,
+    count: String(item.total),
+  })
+  if (item.resumeId) config.set('resumeId', item.resumeId)
+  if (item.providerId) config.set('providerId', item.providerId)
+  return '#/interview-hub?' + config.toString()
+}
+
 export function formatInterviewDate(value: string | null) {
   if (!value) return '—'
   const date = new Date(value)
@@ -133,7 +150,7 @@ export function useInterviewSession(currentId: () => string) {
     if (id) void restore(id)
   }, { immediate: true })
 
-  async function start(settings: InterviewConfig) {
+  async function start(settings: InterviewConfig, beforeNavigate?: (created: InterviewDetail) => void) {
     if (pending.value) return
     const version = ++requestVersion
     pending.value = true
@@ -142,6 +159,7 @@ export function useInterviewSession(currentId: () => string) {
       const next = await api<InterviewDetail>('/interviews', json(settings))
       if (version !== requestVersion) return
       session.value = next
+      beforeNavigate?.(next)
       window.location.hash = sessionLink(next.id, next.kind)
     } catch (failure) {
       if (version === requestVersion) error.value = errorMessage(failure)

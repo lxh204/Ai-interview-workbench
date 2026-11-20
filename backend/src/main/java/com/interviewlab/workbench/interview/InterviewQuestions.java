@@ -1,11 +1,15 @@
 package com.interviewlab.workbench.interview;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 final class InterviewQuestions {
+    private static final String INTERMEDIATE_PROMPT = "请补充你考虑过的方案取舍。";
+    private static final String ADVANCED_PROMPT = "最后请说明方案失效的条件与上线后的监测和恢复动作。";
     private static final Map<String, List<Question>> BY_ROLE = Map.of(
         "java", List.of(
             new Question("创建工单的接口在提交成功后可能因网络超时被客户端重试。你会怎样确保同一次操作只生成一张工单？哪些测试能证明方案在并发下也成立？", List.of(
@@ -202,7 +206,7 @@ final class InterviewQuestions {
     );
 
 
-    static List<Question> plan(InterviewSettings settings, String resume) {
+    static List<Question> plan(InterviewSettings settings, String resume, List<String> answeredQuestions) {
         var candidates = new ArrayList<Question>();
         List<String> topics = InterviewSettings.topics(settings.role());
         if (resume != null) {
@@ -222,10 +226,16 @@ final class InterviewQuestions {
             candidates.addAll(specialty(topic));
         }
         candidates.addAll(ENGINEERING);
-        List<Question> unique = candidates.stream().distinct().toList();
+        var lastSeen = new HashMap<String, Integer>();
+        for (int position = 0; position < answeredQuestions.size(); position++) {
+            lastSeen.put(baseQuestion(answeredQuestions.get(position)), position);
+        }
+        List<Question> ordered = candidates.stream().distinct()
+            .sorted(Comparator.comparingInt(question -> lastSeen.getOrDefault(question.text(), -1)))
+            .toList();
         var result = new ArrayList<Question>();
         for (int position = 0; result.size() < settings.questionCount(); position++) {
-            Question selected = unique.get(position);
+            Question selected = ordered.get(position);
             int parent = result.size();
             result.add(adaptDifficulty(selected, settings.difficulty()));
             if (settings.kind().equals("text") && settings.followUps() && position % 3 == 0
@@ -264,11 +274,21 @@ final class InterviewQuestions {
 
     private record JdArea(String label, String topic, List<String> words) {}
 
+    private static String baseQuestion(String text) {
+        if (text.endsWith(INTERMEDIATE_PROMPT)) {
+            return text.substring(0, text.length() - INTERMEDIATE_PROMPT.length());
+        }
+        if (text.endsWith(ADVANCED_PROMPT)) {
+            return text.substring(0, text.length() - ADVANCED_PROMPT.length());
+        }
+        return text;
+    }
+
     private static Question adaptDifficulty(Question question, String difficulty) {
         return switch (difficulty) {
-            case "mid" -> question.withFollowUp("请补充你考虑过的方案取舍。",
+            case "mid" -> question.withFollowUp(INTERMEDIATE_PROMPT,
                 new Cue("用约束说明方案取舍", "取舍", "权衡", "开销", "成本", "对比", "限制"));
-            case "senior" -> question.withFollowUp("最后请说明方案失效的条件与上线后的监测和恢复动作。",
+            case "senior" -> question.withFollowUp(ADVANCED_PROMPT,
                 new Cue("失效条件及可执行恢复步骤", "回滚", "回退", "恢复", "告警", "降级", "阈值"));
             default -> question;
         };
