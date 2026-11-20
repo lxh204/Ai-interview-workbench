@@ -27,17 +27,32 @@ AI Interview Workbench 是一款面向求职者的 AI 面试辅助平台，整�
 
 ## 系统架构
 
+工作台在浏览器中运行，Spring Boot 应用统一提供业务接口、模型接入与后台任务。PostgreSQL 保存业务记录与知识库，pgvector 在库内执行向量检索，Redis Stream 用于简历分析任务的投递和消费。
+
 ```mermaid
-flowchart LR
-    Vue["Vue 3 工作台"] <-->|"REST / SSE / WebSocket"| API["Spring Boot"]
-    API --> Storage["PostgreSQL + pgvector · 业务数据和向量"]
-    API --> Queue["Redis Stream · 简历分析任务"]
-    Queue --> Worker["后台消费者"]
-    Worker --> Storage
-    Worker --> Models
-    API --> Models["可配置聊天模型和向量模型"]
-    API --> ASR["可选百炼语音转写"]
+flowchart TB
+    Browser["Vue 3 + TypeScript 工作台"]
+    subgraph App["Spring Boot 单应用"]
+        API["业务 API 与实时通道"]
+        Worker["简历任务发布与消费"]
+    end
+    PG[("PostgreSQL + pgvector")]
+    Redis[("Redis Stream")]
+    Models["OpenAI 兼容聊天模型 / 向量模型"]
+    Speech["阿里云百炼 Fun-ASR"]
+
+    Browser <-->|"REST / SSE / WebSocket"| API
+    API <-->|"业务数据、简历任务与向量检索"| PG
+    API -->|"面试反馈、问答与向量化"| Models
+    API <-->|"可选 WebSocket 语音转写"| Speech
+    Worker <-->|"读取待投递任务、写回结果"| PG
+    Worker <-->|"投递、消费与确认"| Redis
+    Worker -->|"简历分析"| Models
 ```
+
+- **简历异步分析**　上传后在 PostgreSQL 保存简历和任务状态，前端轮询进度。后台把任务 ID 和版本写入 Redis Stream，消费者分析后先写回数据库，再确认消息。临时故障会按计划重试。
+- **知识库 RAG**　文档解析、分块后按模型配置生成向量。问答先限定会话资料范围，合并 pgvector 召回与关键词评分，配置聊天模型后，后端将检索片段传给模型，通过 SSE 流式返回回答，并附上可核对的原文引用。
+- **实时语音**　页面显示实时字幕，题目由浏览器朗读。启用百炼后，浏览器通过 WebSocket 将音频发送到后端，后端转发给 Fun-ASR，并把实时字幕回传给浏览器。
 
 ## 快速开始
 
