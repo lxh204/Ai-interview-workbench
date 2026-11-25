@@ -137,7 +137,3 @@ pnpm --dir frontend build
 ```
 
 常规回归测试使用独立测试库。向量集成测试可通过 `WORKBENCH_VECTOR_TEST_URL`、`WORKBENCH_VECTOR_TEST_USER` 和 `WORKBENCH_VECTOR_TEST_PASSWORD` 连接安装了 pgvector 的测试库。Redis Stream 集成测试通过 `RESUME_TEST_REDIS_PORT` 启用，也可设置 `RESUME_TEST_POSTGRES_URL`、`RESUME_TEST_POSTGRES_USER` 和 `RESUME_TEST_POSTGRES_PASSWORD` 验证消费和 PostgreSQL 状态的一致性。
-
-## 项目参考
-
-简历库、面试中心和知识库面试的操作流程参考 [InterviewGuide](https://github.com/Snailclimb/interview-guide)。本仓库使用 Vue 3 和 Spring Boot 实现相应流程，运行依赖 PostgreSQL、pgvector 与 Redis。
