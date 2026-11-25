@@ -2,7 +2,7 @@
 
 **Java 21 · Spring Boot 3.5 · Vue 3 · TypeScript · PostgreSQL + pgvector · Redis Stream**
 
-[旧版在线演示（需账号）](https://8.163.102.189/) · [本地启动](#快速开始) · [系统架构](#系统架构)
+[旧版在线演示（需账号）](https://8.163.102.189/) · [功能演示](#功能演示) · [本地启动](#快速开始) · [系统架构](#系统架构)
 
 ## 项目介绍
 
@@ -12,10 +12,6 @@ AI Interview Workbench 是一款面向求职者的 AI 面试辅助平台，整�
 
 简历上传后保存任务状态，再由 **Redis Stream** 投递给后台消费者异步分析，支持失败重试与任务恢复。语音面试支持**实时转写**和浏览器朗读。配置阿里云百炼 Fun-ASR 后，音频可通过 **WebSocket** 转发给云端模型实时转写。
 
-| 知识库管理 | 问答助手 |
-| --- | --- |
-| ![知识库文档列表和分类筛选](docs/screenshots/knowledge-library.png) | ![问答会话和可展开的原文引用](docs/screenshots/knowledge-chat.png) |
-
 ## 可以做什么
 
 | 模块 | 操作流程 |
@@ -24,6 +20,201 @@ AI Interview Workbench 是一款面向求职者的 AI 面试辅助平台，整�
 | 简历管理 | 导入 PDF、DOCX、TXT、Markdown 或粘贴文本，填写目标岗位后提交异步分析。从简历库查看进度、重试失败任务、下载原件或导出 PDF 报告。 |
 | 模拟面试 | 在同一个面试中心选择文字或语音模式，按主题与难度配置 3–20 道题，可关联已分析的简历、选择本场模型或根据岗位描述练习。最近记录支持续练、查看报告和按原主题、难度与题量重新练习。总记录页汇总文字、语音和知识库练习。文字模式支持暂存、收藏、跳题和提前交卷。语音模式支持字幕、暂停恢复和文字输入。完成后可查看逐题反馈并导出 PDF。 |
 | 日程与设置 | 粘贴面试邀请并确认提取结果，在日、周、月或列表中管理日程。支持拖拽改期、修改状态和日程页内提醒。可保存并切换多套模型配置。 |
+
+## 功能演示
+
+以下画面来自本机运行的工作台。演示连接真实 PostgreSQL、pgvector 和 Redis，使用合成资料与模拟聊天、向量服务。语音演示使用模拟浏览器识别和朗读回调。
+
+[简历管理](#简历管理) · [岗位 JD 与文字面试](#岗位-jd-与文字面试) · [语音面试](#语音面试) · [知识库管理与问答](#知识库管理与问答) · [题库与专项练习](#题库与专项练习) · [面试日程](#面试日程) · [模型设置](#模型设置)
+
+### 简历管理
+
+填写目标岗位并提交简历后，列表显示待分析状态。分析完成后，可筛选记录、查看改写建议、下载原件或导出 PDF。
+
+![简历分析结果、改写建议与导出操作](docs/demos/resume-04-report.webp)
+
+<details>
+<summary>展开文件上传、异步分析、失败重试与简历库</summary>
+
+1. 上传文件或粘贴示例简历，填写目标岗位。
+
+   ![通过文件上传录入简历](docs/demos/resume-05-file.webp)
+
+   ![录入简历和目标岗位](docs/demos/resume-01-intake.webp)
+
+2. 提交后查看待分析状态。
+
+   ![后台任务待分析状态](docs/demos/resume-02-processing.webp)
+
+3. 返回简历库，筛选已完成的记录并打开分析详情。
+
+   ![简历列表与分析状态筛选](docs/demos/resume-03-library.webp)
+
+4. 模拟模型暂时不可用。自动重试耗尽后，分析页显示失败状态，可点击「重新分析」。
+
+   ![简历分析失败和重新分析入口](docs/demos/resume-06-retry.webp)
+
+5. 模拟服务恢复后，重新分析完成。
+
+   ![手动重试后生成简历报告](docs/demos/resume-07-recovered.webp)
+
+</details>
+
+### 岗位 JD 与文字面试
+
+从已分析的简历进入面试中心，粘贴目标岗位 JD，按方向、难度和题量开始练习。答题时可暂存草稿、收藏、回答追问或跳题。结束后回看逐题反馈和导出 PDF。
+
+![岗位 JD、关联简历与题量配置](docs/demos/interview-01-jd-setup.webp)
+
+<details>
+<summary>展开作答、追问、记录与报告</summary>
+
+1. 输入回答并收藏当前题，刷新后可恢复草稿。
+
+   ![文字回答、草稿暂存和题目收藏](docs/demos/interview-02-answer-draft.webp)
+
+2. 提交后进入追问，也可跳过当前题。
+
+   ![文字面试追问与跳题入口](docs/demos/interview-03-follow-up.webp)
+
+3. 在总记录页按类型和状态筛选，可继续未完成的面试。
+
+   ![面试记录筛选与查看报告](docs/demos/interview-04-history.webp)
+
+4. 打开报告回顾逐题反馈、筛选收藏题、导出 PDF，或按原配置开始新一场。
+
+   ![文字面试报告与逐题回顾](docs/demos/interview-05-report.webp)
+
+</details>
+
+### 语音面试
+
+在面试中心选择语音并设置时长。播放题目后可用麦克风回答，校对实时字幕并提交，也可直接输入。暂停后支持继续，结束后查看反馈和导出报告。
+
+![语音面试实时字幕与提交入口](docs/demos/voice-captions.webp)
+
+<details>
+<summary>展开语音配置、暂停与报告</summary>
+
+1. 在统一面试入口设置语音模式和计划时长。
+
+   ![语音面试配置与时长](docs/demos/voice-setup.webp)
+
+2. 暂停当前面试，之后点击恢复继续答题。
+
+   ![语音面试暂停与恢复](docs/demos/voice-paused.webp)
+
+3. 结束面试后查看已提交的回答和反馈。
+
+   ![语音面试逐题反馈与 PDF 导出](docs/demos/voice-report.webp)
+
+</details>
+
+### 知识库管理与问答
+
+批量导入复习资料后，可按分类检索、下载原件或重建向量。问答前选定资料范围，发送问题后逐段接收回复，点击引用核对原文。会话支持追问、改名和置顶。
+
+![带原文引用的知识库问答](docs/demos/knowledge-04-citation.webp)
+
+<details>
+<summary>展开批量导入、重建向量、流式回答与追问</summary>
+
+1. 选中两份演示文档并批量导入。
+
+   ![批量导入知识库文档](docs/demos/knowledge-01-import.webp)
+
+2. 查看索引状态，按分类筛选，按需下载或重建向量。
+
+   ![资料分类、向量状态与重建入口](docs/demos/knowledge-02-index.webp)
+
+3. 选定资料范围，观察流式回答。
+
+   ![选定资料后的 SSE 增量输出](docs/demos/knowledge-03-stream.webp)
+
+4. 发送追问，改名、置顶并重新打开会话。
+
+   ![问答会话历史、追问和置顶](docs/demos/knowledge-05-conversation.webp)
+
+</details>
+
+### 题库与专项练习
+
+从知识库面试总览选择资料，生成题目或手动添加题目，再批量启用。按题量与追问设置开始练习，完成后回看自己的回答、参考答案和原文出处。
+
+![知识库面试总览与题库入口](docs/demos/knowledge-06-overview.webp)
+
+<details>
+<summary>展开出题、批量启用、练习和记录</summary>
+
+1. 设置生成题目数量、难度和追问题量。
+
+   ![根据资料生成题目和追问](docs/demos/knowledge-07-generate.webp)
+
+2. 手动新增题目、参考答案和追问。
+
+   ![手动新增题目和追问](docs/demos/knowledge-08-create-question.webp)
+
+3. 查看草稿状态并批量启用题目。
+
+   ![题库筛选和批量操作](docs/demos/knowledge-09-bank.webp)
+
+4. 设置本轮题量和追问并开始练习。
+
+   ![知识库专项练习设置](docs/demos/knowledge-10-practice-config.webp)
+
+5. 按题作答，完成主问题和追问。
+
+   ![知识库专项练习作答](docs/demos/knowledge-11-practice.webp)
+
+6. 回顾已提交的回答、参考答案和检索片段。
+
+   ![专项练习结果和参考答案](docs/demos/knowledge-12-practice-result.webp)
+
+7. 从练习记录中打开已完成的会话。
+
+   ![按资料查看知识库练习记录](docs/demos/knowledge-13-practice-records.webp)
+
+</details>
+
+### 面试日程
+
+粘贴邀请后，系统提取公司、岗位、时间和会议链接，核对后保存。在周历上可拖拽改期，也可通过列表修改状态。设置提醒后，日程页会在面试临近时提示。
+
+![周历面试安排和拖拽改期结果](docs/demos/schedule-calendar.webp)
+
+<details>
+<summary>展开邀请解析、改期、状态和提醒</summary>
+
+1. 粘贴面试邀请。
+
+   ![粘贴面试邀请](docs/demos/schedule-invitation.webp)
+
+2. 核对解析出的时间、会议方式和链接。
+
+   ![邀请解析结果和确认保存](docs/demos/schedule-parsed.webp)
+
+3. 在列表中更改面试状态或编辑安排。
+
+   ![面试列表和状态更新](docs/demos/schedule-status.webp)
+
+4. 临近面试时，在日程页查看提醒。
+
+   ![日程页的临近面试提醒](docs/demos/schedule-reminder.webp)
+
+</details>
+
+### 模型设置
+
+添加 OpenAI 兼容服务，配置聊天和向量模型。测试连接成功后，从已保存的配置中选择当前启用的服务。
+
+![模型配置保存、启用与当前服务](docs/demos/settings-active.webp)
+
+<details>
+<summary>展开连接测试</summary>
+
+![通过模型设置测试聊天和向量接口](docs/demos/settings-connection.webp)
+
+</details>
 
 ## 系统架构
 
